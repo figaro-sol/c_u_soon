@@ -1,0 +1,9 @@
+[package]
+name = "c_u_soon"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+bytemuck = { workspace = true }
+solana-address = { workspace = true }

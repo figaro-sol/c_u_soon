@@ -1,6 +1,16 @@
-[package]
-name = "c_u_soon"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = ["sdk", "program"]
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+license = "Apache-2.0"
+repository = "https://github.com/anza-xyz/pinocchio"
+
+[workspace.dependencies]
+pinocchio = { git = "ssh://git@github.com/figaro-sol/pinocchio.git", branch = "small_oracle" }
+
+solana-address = { version = "2.0", features = ["bytemuck"] }
+bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }

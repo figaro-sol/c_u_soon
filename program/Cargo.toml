@@ -1,0 +1,20 @@
+[package]
+name = "c_u_soon_program"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+c_u_soon = { path = "../sdk" }
+bytemuck = { workspace = true }
+pinocchio = { workspace = true, features = ["cpi"] }
+pinocchio-system = "0.5"
+
+[dev-dependencies]
+log = "0.4"
+mollusk-svm = "0.10"
+solana-sdk = "3.0"
+solana-system-interface = "2.0"

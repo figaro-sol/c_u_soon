@@ -1,0 +1,345 @@
+mod common;
+
+use c_u_soon::{Envelope, ORACLE_BYTES};
+use common::{
+    create_existing_envelope, create_fast_path_instruction_data, create_funded_account,
+    create_instruction_data, find_envelope_pda, PROGRAM_ID, PROGRAM_PATH,
+};
+use mollusk_svm::{program::keyed_account_for_system_program, result::Check, Mollusk};
+use pinocchio::Address;
+use solana_sdk::instruction::{AccountMeta, Instruction};
+use solana_system_interface::program as system_program;
+
+// -- Slow path: Create --
+
+#[test]
+fn test_create_happy_path() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let custom_seeds: &[&[u8]] = &[b"test"];
+    let (envelope_pda, bump) = find_envelope_pda(&authority, custom_seeds);
+
+    let account_metas = vec![
+        AccountMeta::new(authority, true),
+        AccountMeta::new(envelope_pda, true),
+        AccountMeta::new_readonly(system_program::ID, false),
+    ];
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_instruction_data(custom_seeds, bump),
+        account_metas,
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pda, create_funded_account(0)),
+            keyed_account_for_system_program(),
+        ],
+        &[Check::success()],
+    );
+
+    let envelope: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(envelope.authority, authority);
+    assert_eq!(envelope.oracle_state.sequence, 0);
+}
+
+#[test]
+fn test_create_idempotent() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let custom_seeds: &[&[u8]] = &[b"test"];
+    let (envelope_pda, bump) = find_envelope_pda(&authority, custom_seeds);
+
+    let account_metas = vec![
+        AccountMeta::new(authority, true),
+        AccountMeta::new(envelope_pda, false),
+        AccountMeta::new_readonly(system_program::ID, false),
+    ];
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_instruction_data(custom_seeds, bump),
+        account_metas,
+    );
+
+    let existing = create_existing_envelope(&authority, 5);
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pda, existing),
+            keyed_account_for_system_program(),
+        ],
+        &[Check::success()],
+    );
+
+    let envelope: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(envelope.oracle_state.sequence, 5);
+}
+
+#[test]
+fn test_create_wrong_pda() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let custom_seeds: &[&[u8]] = &[b"test"];
+    let (_, bump) = find_envelope_pda(&authority, custom_seeds);
+
+    let wrong_pda = Address::new_unique();
+
+    let account_metas = vec![
+        AccountMeta::new(authority, true),
+        AccountMeta::new(wrong_pda, true),
+        AccountMeta::new_readonly(system_program::ID, false),
+    ];
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_instruction_data(custom_seeds, bump),
+        account_metas,
+    );
+
+    mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (wrong_pda, create_funded_account(0)),
+            keyed_account_for_system_program(),
+        ],
+        &[Check::err(
+            solana_sdk::program_error::ProgramError::InvalidSeeds,
+        )],
+    );
+}
+
+#[test]
+fn test_create_not_signer() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let custom_seeds: &[&[u8]] = &[b"test"];
+    let (envelope_pda, bump) = find_envelope_pda(&authority, custom_seeds);
+
+    let account_metas = vec![
+        AccountMeta::new_readonly(authority, false), // not signer
+        AccountMeta::new(envelope_pda, true),
+        AccountMeta::new_readonly(system_program::ID, false),
+    ];
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_instruction_data(custom_seeds, bump),
+        account_metas,
+    );
+
+    mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pda, create_funded_account(0)),
+            keyed_account_for_system_program(),
+        ],
+        &[Check::err(
+            solana_sdk::program_error::ProgramError::MissingRequiredSignature,
+        )],
+    );
+}
+
+// -- Fast path --
+
+#[test]
+fn test_fast_path_update_after_create() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 0);
+
+    // Fast path: 2 accounts
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_fast_path_instruction_data(1, &[42]),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+        ],
+        &[Check::success()],
+    );
+
+    let resulting_envelope: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(resulting_envelope.oracle_state.sequence, 1);
+    assert_eq!(resulting_envelope.oracle_state.data[0], 42u8);
+}
+
+#[test]
+fn test_fast_path_wrong_authority() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let wrong_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 0);
+
+    // Fast path with wrong authority → error
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_fast_path_instruction_data(1, &[42]),
+        vec![
+            AccountMeta::new_readonly(wrong_authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+        ],
+    );
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (wrong_authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+        ],
+    );
+    assert!(result.program_result.is_err());
+}
+
+#[test]
+fn test_fast_path_stale_sequence() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 5);
+
+    // Try to update with sequence <= current (5)
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_fast_path_instruction_data(5, &[42]),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+        ],
+    );
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+        ],
+    );
+    assert!(result.program_result.is_err());
+}
+
+#[test]
+fn test_fast_path_full_payload() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 0);
+
+    // Fill entire oracle data field: payload = ORACLE_BYTES = 247 bytes.
+    // instruction_data_len = 8 + 247 = 255 = u8::MAX; data_size = 255.
+    // Copies sequence (8 bytes) + all data bytes (247 bytes) in one shot.
+    // The explicit _pad byte at OracleState offset 255 is intentionally left untouched.
+    let payload = [0xAB_u8; ORACLE_BYTES];
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_fast_path_instruction_data(1, &payload),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+        ],
+        &[Check::success()],
+    );
+
+    let resulting_envelope: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(resulting_envelope.oracle_state.sequence, 1);
+    assert!(resulting_envelope.oracle_state.data.iter().all(|&b| b == 0xAB));
+}
+
+#[test]
+fn test_fast_path_all_write_sizes() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let prev_log = log::max_level();
+    log::set_max_level(log::LevelFilter::Off);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let mut envelope_account = create_existing_envelope(&authority, 0);
+
+    // Test every valid payload size: 0 bytes (sequence-only) through ORACLE_BYTES (full fill).
+    // Each iteration writes [i; i] and verifies the written region + untouched region.
+    for i in 0..=ORACLE_BYTES {
+        let seq = (i + 1) as u64;
+        let payload = vec![i as u8; i];
+        let instruction = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &create_fast_path_instruction_data(seq, &payload),
+            vec![
+                AccountMeta::new_readonly(authority, true),
+                AccountMeta::new(envelope_pubkey, false),
+            ],
+        );
+
+        let result = mollusk.process_and_validate_instruction(
+            &instruction,
+            &[
+                (authority, create_funded_account(1_000_000_000)),
+                (envelope_pubkey, envelope_account),
+            ],
+            &[Check::success(), Check::compute_units(36)],
+        );
+
+        let env: &Envelope = bytemuck::from_bytes(
+            &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+        );
+        assert_eq!(env.oracle_state.sequence, seq, "sequence wrong at size {i}");
+        assert!(
+            env.oracle_state.data[..i].iter().all(|&b| b == i as u8),
+            "written region wrong at size {i}"
+        );
+        assert!(
+            env.oracle_state.data[i..].iter().all(|&b| b == 0),
+            "unwritten region modified at size {i}"
+        );
+
+        envelope_account = result.resulting_accounts[1].1.clone();
+    }
+
+    log::set_max_level(prev_log);
+}
