@@ -4,6 +4,9 @@ use bytemuck::bytes_of;
 use c_u_soon::{Envelope, OracleState, ENVELOPE_SEED, ORACLE_BYTES};
 use pinocchio::Address;
 use solana_sdk::account::Account;
+use std::sync::RwLock;
+
+pub static LOG_LOCK: RwLock<()> = RwLock::new(());
 
 pub const PROGRAM_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

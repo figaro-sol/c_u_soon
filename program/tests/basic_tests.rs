@@ -3,7 +3,7 @@ mod common;
 use c_u_soon::{Envelope, ORACLE_BYTES};
 use common::{
     create_existing_envelope, create_fast_path_instruction_data, create_funded_account,
-    create_instruction_data, find_envelope_pda, PROGRAM_ID, PROGRAM_PATH,
+    create_instruction_data, find_envelope_pda, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
 };
 use mollusk_svm::{program::keyed_account_for_system_program, result::Check, Mollusk};
 use pinocchio::Address;
@@ -14,6 +14,7 @@ use solana_system_interface::program as system_program;
 
 #[test]
 fn test_create_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -51,6 +52,7 @@ fn test_create_happy_path() {
 
 #[test]
 fn test_create_idempotent() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -89,6 +91,7 @@ fn test_create_idempotent() {
 
 #[test]
 fn test_create_wrong_pda() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -124,6 +127,7 @@ fn test_create_wrong_pda() {
 
 #[test]
 fn test_create_not_signer() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -159,6 +163,7 @@ fn test_create_not_signer() {
 
 #[test]
 fn test_fast_path_update_after_create() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -194,6 +199,7 @@ fn test_fast_path_update_after_create() {
 
 #[test]
 fn test_fast_path_wrong_authority() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -224,6 +230,7 @@ fn test_fast_path_wrong_authority() {
 
 #[test]
 fn test_fast_path_stale_sequence() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -253,6 +260,7 @@ fn test_fast_path_stale_sequence() {
 
 #[test]
 fn test_fast_path_full_payload() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -287,13 +295,18 @@ fn test_fast_path_full_payload() {
         &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
     );
     assert_eq!(resulting_envelope.oracle_state.sequence, 1);
-    assert!(resulting_envelope.oracle_state.data.iter().all(|&b| b == 0xAB));
+    assert!(resulting_envelope
+        .oracle_state
+        .data
+        .iter()
+        .all(|&b| b == 0xAB));
 }
 
 #[test]
 fn test_fast_path_all_write_sizes() {
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
+    let _log_guard = LOG_LOCK.write().unwrap();
     let prev_log = log::max_level();
     log::set_max_level(log::LevelFilter::Off);
 
