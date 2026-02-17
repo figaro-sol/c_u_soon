@@ -1,3 +1,4 @@
+use c_u_soon::SlowPathInstruction;
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
 use super::instructions;
@@ -13,11 +14,17 @@ fn process_instruction(
     accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    if data.is_empty() {
+    let ix: SlowPathInstruction =
+        wincode::deserialize(data).map_err(|_| ProgramError::InvalidInstructionData)?;
+
+    if !ix.validate() {
         return Err(ProgramError::InvalidInstructionData);
     }
-    match data[0] {
-        0 => instructions::create::process(program_id, accounts, &data[1..]),
+
+    match ix {
+        SlowPathInstruction::Create { custom_seeds, bump } => {
+            instructions::create::process(program_id, accounts, custom_seeds, bump)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

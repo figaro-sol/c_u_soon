@@ -10,6 +10,7 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 c_u_soon = { path = "../sdk" }
 bytemuck = { workspace = true }
+wincode = { workspace = true }
 pinocchio = { workspace = true, features = ["cpi"] }
 pinocchio-system = "0.5"
 

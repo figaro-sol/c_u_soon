@@ -1,5 +1,7 @@
+extern crate alloc;
 use crate::pda::create_program_address;
-use c_u_soon::{parse_seeds, Envelope, ENVELOPE_SEED, MAX_CUSTOM_SEEDS};
+use alloc::vec::Vec;
+use c_u_soon::{Bitmask, Envelope, ENVELOPE_SEED};
 use pinocchio::{
     cpi::{Seed, Signer},
     error::ProgramError,
@@ -8,48 +10,45 @@ use pinocchio::{
 };
 use pinocchio_system::instructions::{Allocate, Assign, Transfer};
 
-// ENVELOPE_SEED + authority + up to MAX_CUSTOM_SEEDS + bump
-const MAX_SEEDS: usize = 2 + MAX_CUSTOM_SEEDS + 1;
-
-pub fn process(program_id: &Address, accounts: &[AccountView], data: &[u8]) -> ProgramResult {
+pub fn process(
+    program_id: &Address,
+    accounts: &[AccountView],
+    custom_seeds: Vec<Vec<u8>>,
+    bump: u8,
+) -> ProgramResult {
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
     let authority = &accounts[0];
     let envelope_account = &accounts[1];
-    // accounts[2] = system_program (found by ID during CPI)
-    // accounts[3..] = padding, ignored
 
     if !authority.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
-    let (parser, bump) = parse_seeds(data).ok_or(ProgramError::InvalidInstructionData)?;
-
-    // Build seeds array on stack: [ENVELOPE_SEED, authority, custom_seeds..., bump]
+    let custom_seeds_refs: Vec<&[u8]> = custom_seeds.iter().map(|s| s.as_slice()).collect();
     let bump_bytes = [bump];
-    let mut seed_storage: [&[u8]; MAX_SEEDS] = [&[]; MAX_SEEDS];
-    seed_storage[0] = ENVELOPE_SEED;
-    seed_storage[1] = authority.address().as_array().as_ref();
-    let mut idx = 2;
-    for seed in parser {
-        seed_storage[idx] = seed;
-        idx += 1;
-    }
-    seed_storage[idx] = &bump_bytes;
-    let seeds = &seed_storage[..idx + 1];
 
-    let expected = create_program_address(seeds, program_id)?;
+    let mut seeds_vec: Vec<&[u8]> = Vec::with_capacity(3 + custom_seeds_refs.len());
+    seeds_vec.push(ENVELOPE_SEED);
+    seeds_vec.push(authority.address().as_array().as_ref());
+    seeds_vec.extend(custom_seeds_refs.iter().copied());
+    seeds_vec.push(&bump_bytes);
+
+    let expected = create_program_address(&seeds_vec, program_id)?;
     if envelope_account.address() != &expected {
         return Err(ProgramError::InvalidSeeds);
     }
 
-    // Idempotent: if envelope already exists with correct authority, succeed
+    // Idempotent: if envelope already exists with correct authority/bump, succeed
     if envelope_account.owned_by(program_id) {
         let envelope_data = envelope_account.try_borrow()?;
         let envelope: &Envelope = bytemuck::from_bytes(&envelope_data);
         if envelope.authority != *authority.address() {
             return Err(ProgramError::IncorrectAuthority);
+        }
+        if envelope.bump != bump {
+            return Err(ProgramError::InvalidSeeds);
         }
         return Ok(());
     }
@@ -74,16 +73,8 @@ pub fn process(program_id: &Address, accounts: &[AccountView], data: &[u8]) -> P
         .invoke()?;
     }
 
-    // Build CPI signer from the same seeds slice
-    let mut cpi_seeds: [core::mem::MaybeUninit<Seed>; MAX_SEEDS] =
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
-    for (i, s) in seeds.iter().enumerate() {
-        cpi_seeds[i].write(Seed::from(*s));
-    }
-    let num_seeds = seeds.len();
-    let cpi_seeds_init =
-        unsafe { core::slice::from_raw_parts(cpi_seeds.as_ptr() as *const Seed, num_seeds) };
-    let signer = Signer::from(cpi_seeds_init);
+    let seeds_for_signer: Vec<Seed> = seeds_vec.iter().map(|s| Seed::from(*s)).collect();
+    let signer = Signer::from(seeds_for_signer.as_slice());
 
     Allocate {
         account: envelope_account,
@@ -100,6 +91,9 @@ pub fn process(program_id: &Address, accounts: &[AccountView], data: &[u8]) -> P
     let mut envelope_data = envelope_account.try_borrow_mut()?;
     let envelope: &mut Envelope = bytemuck::from_bytes_mut(&mut envelope_data);
     envelope.authority = *authority.address();
+    envelope.bump = bump;
+    envelope.program_bitmask = Bitmask::ZERO;
+    envelope.user_bitmask = Bitmask::ZERO;
 
     Ok(())
 }

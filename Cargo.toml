@@ -14,3 +14,4 @@ pinocchio = { git = "ssh://git@github.com/figaro-sol/pinocchio.git", branch = "s
 
 solana-address = { version = "2.0", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
+wincode = { version = "0.2", features = ["derive"] }

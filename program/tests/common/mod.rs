@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
-use bytemuck::bytes_of;
-use c_u_soon::{Envelope, OracleState, ENVELOPE_SEED, ORACLE_BYTES};
+use bytemuck::{bytes_of, Zeroable};
+use c_u_soon::{
+    Bitmask, Envelope, OracleState, SlowPathInstruction, ENVELOPE_SEED, ORACLE_BYTES,
+    AUX_DATA_SIZE,
+};
 use pinocchio::Address;
 use solana_sdk::account::Account;
 use std::sync::RwLock;
@@ -24,16 +27,14 @@ pub fn find_envelope_pda(authority: &Address, custom_seeds: &[&[u8]]) -> (Addres
     Address::find_program_address(&seeds, &PROGRAM_ID)
 }
 
-/// Build create instruction data: [discriminator=0] ++ [num_seeds, [len, data...]..., bump]
+/// Build create instruction data using wincode serialization
 pub fn create_instruction_data(custom_seeds: &[&[u8]], bump: u8) -> Vec<u8> {
-    let mut data = vec![0u8]; // discriminator
-    data.push(custom_seeds.len() as u8);
-    for seed in custom_seeds {
-        data.push(seed.len() as u8);
-        data.extend_from_slice(seed);
-    }
-    data.push(bump);
-    data
+    let seeds_vecs: Vec<Vec<u8>> = custom_seeds.iter().map(|s| s.to_vec()).collect();
+    let ix = SlowPathInstruction::Create {
+        custom_seeds: seeds_vecs,
+        bump,
+    };
+    wincode::serialize(&ix).unwrap()
 }
 
 pub fn create_funded_account(lamports: u64) -> Account {
@@ -47,6 +48,10 @@ pub fn create_funded_account(lamports: u64) -> Account {
 }
 
 pub fn create_existing_envelope(authority: &Address, seq: u64) -> Account {
+    create_existing_envelope_with_bump(authority, seq, 0)
+}
+
+pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u8) -> Account {
     let envelope = Envelope {
         authority: *authority,
         oracle_state: OracleState {
@@ -54,6 +59,14 @@ pub fn create_existing_envelope(authority: &Address, seq: u64) -> Account {
             data: [0u8; ORACLE_BYTES],
             _pad: [0u8; 1],
         },
+        bump,
+        _padding: [0u8; 7],
+        delegation_authority: Address::zeroed(),
+        program_bitmask: Bitmask::ZERO,
+        user_bitmask: Bitmask::ZERO,
+        authority_aux_sequence: 0,
+        program_aux_sequence: 0,
+        auxiliary_data: [0u8; AUX_DATA_SIZE],
     };
     Account {
         lamports: 1_000_000_000,

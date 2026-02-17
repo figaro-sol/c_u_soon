@@ -2,8 +2,9 @@ mod common;
 
 use c_u_soon::{Envelope, ORACLE_BYTES};
 use common::{
-    create_existing_envelope, create_fast_path_instruction_data, create_funded_account,
-    create_instruction_data, find_envelope_pda, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
+    create_existing_envelope, create_existing_envelope_with_bump,
+    create_fast_path_instruction_data, create_funded_account, create_instruction_data,
+    find_envelope_pda, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
 };
 use mollusk_svm::{program::keyed_account_for_system_program, result::Check, Mollusk};
 use pinocchio::Address;
@@ -71,7 +72,7 @@ fn test_create_idempotent() {
         account_metas,
     );
 
-    let existing = create_existing_envelope(&authority, 5);
+    let existing = create_existing_envelope_with_bump(&authority, 5, bump);
 
     let result = mollusk.process_and_validate_instruction(
         &instruction,
