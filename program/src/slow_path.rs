@@ -41,6 +41,9 @@ fn process_instruction(
         SlowPathInstruction::UpdateAuxiliary { sequence, data } => {
             instructions::update_auxiliary::process(program_id, accounts, sequence, &data)
         }
+        SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data } => {
+            instructions::update_auxiliary_delegated::process(program_id, accounts, sequence, &data)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
