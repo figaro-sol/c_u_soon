@@ -1602,3 +1602,79 @@ fn test_update_auxiliary_force_wrong_delegation_auth() {
     );
     assert!(result.program_result.is_err());
 }
+
+// -- Edge Case Tests --
+
+#[test]
+fn test_fast_path_full_payload_255_bytes() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let envelope = create_existing_envelope(&authority, 0);
+
+    // Full payload: 8-byte sequence + 247-byte data = 255 bytes
+    let mut payload = [0u8; 255];
+    payload[0..8].copy_from_slice(&1u64.to_le_bytes());
+    payload[8..].copy_from_slice(&[0xAAu8; 247]);
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &payload,
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.oracle_state.data, [0xAAu8; 247]);
+}
+
+#[test]
+fn test_update_auxiliary_force_sequence_boundaries() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let bitmask = Bitmask::from([0x00u8; 128]);
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, bitmask, bitmask);
+
+    let aux_data = [0u8; AUX_DATA_SIZE];
+
+    // Test with u64::MAX sequences
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &update_auxiliary_force_instruction_data(u64::MAX, u64::MAX, aux_data),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(delegation_authority, true),
+        ],
+    );
+
+    mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (delegation_authority, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+}
