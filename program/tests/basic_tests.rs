@@ -361,6 +361,128 @@ fn test_fast_path_all_write_sizes() {
     log::set_max_level(prev_log);
 }
 
+#[test]
+fn test_fast_path_length_modulo_replay() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    // Start with sequence = 1 so we can observe the truncation drop.
+    let mut envelope_account = create_existing_envelope(&authority, 1);
+
+    // Craft a 257-byte instruction so the runtime length header low byte becomes 1.
+    const MALFORMED_LEN: usize = 257;
+    let payload = vec![0xCD_u8; MALFORMED_LEN - 8];
+    let malicious_sequence = 0x0100_u64;
+    let instruction_data = create_fast_path_instruction_data(malicious_sequence, &payload);
+    assert_eq!(instruction_data.len(), MALFORMED_LEN);
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &instruction_data,
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+        ],
+    );
+
+    let first_result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope_account),
+        ],
+        &[Check::success()],
+    );
+
+    let first_envelope: &Envelope = bytemuck::from_bytes(
+        &first_result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(first_envelope.oracle_state.sequence, 0);
+
+    envelope_account = first_result.resulting_accounts[1].1.clone();
+
+    let second_result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope_account),
+        ],
+        &[Check::success()],
+    );
+
+    let second_envelope: &Envelope = bytemuck::from_bytes(
+        &second_result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(second_envelope.oracle_state.sequence, 0);
+}
+
+#[test]
+fn test_fast_path_field_isolation_full_payload() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let delegation_auth = Address::new_unique();
+
+    let mut program_bitmask = Bitmask::ZERO;
+    program_bitmask.set_bit(0);
+    program_bitmask.set_bit(31);
+    let mut user_bitmask = Bitmask::ZERO;
+    user_bitmask.set_bit(12);
+    user_bitmask.set_bit(63);
+
+    let mut envelope_account =
+        create_delegated_envelope(&authority, &delegation_auth, program_bitmask, user_bitmask);
+    {
+        let envelope: &mut Envelope = bytemuck::from_bytes_mut(
+            &mut envelope_account.data[..core::mem::size_of::<Envelope>()],
+        );
+        envelope.bump = 42;
+        envelope._padding = [0x11; 7];
+        envelope.authority_aux_sequence = 7;
+        envelope.program_aux_sequence = 9;
+        envelope.auxiliary_data = [0x77; AUX_DATA_SIZE];
+    }
+
+    let payload = [0xAB_u8; ORACLE_BYTES];
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &create_fast_path_instruction_data(1, &payload),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope_account),
+        ],
+        &[Check::success()],
+    );
+
+    let envelope: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+
+    assert_eq!(envelope.oracle_state.sequence, 1);
+    assert!(envelope.oracle_state.data.iter().all(|&b| b == 0xAB));
+    assert_eq!(envelope.bump, 42);
+    assert_eq!(envelope._padding, [0x11; 7]);
+    assert_eq!(envelope.delegation_authority, delegation_auth);
+    assert_eq!(envelope.program_bitmask, program_bitmask);
+    assert_eq!(envelope.user_bitmask, user_bitmask);
+    assert_eq!(envelope.authority_aux_sequence, 7);
+    assert_eq!(envelope.program_aux_sequence, 9);
+    assert_eq!(envelope.auxiliary_data, [0x77; AUX_DATA_SIZE]);
+}
+
 // -- Slow path: Close --
 
 #[test]
