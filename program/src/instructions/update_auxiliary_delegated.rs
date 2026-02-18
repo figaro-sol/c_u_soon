@@ -30,7 +30,10 @@ pub fn process(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    if !envelope.program_bitmask.apply_masked_update(&mut envelope.auxiliary_data, data) {
+    if !envelope
+        .program_bitmask
+        .apply_masked_update(&mut envelope.auxiliary_data, data)
+    {
         return Err(ProgramError::InvalidArgument);
     }
 

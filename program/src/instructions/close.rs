@@ -24,6 +24,9 @@ pub fn process(program_id: &Address, accounts: &[AccountView]) -> ProgramResult 
         if envelope.authority != *authority.address() {
             return Err(ProgramError::IncorrectAuthority);
         }
+        if envelope.has_delegation() {
+            return Err(ProgramError::InvalidArgument);
+        }
         envelope_data.fill(0);
     }
 

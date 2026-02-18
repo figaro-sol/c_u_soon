@@ -41,16 +41,16 @@ pub struct OracleState {
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct Envelope {
-    pub authority: Address,                     // 32  [0..32]
-    pub oracle_state: OracleState,              // 256 [32..288]
-    pub bump: u8,                               // 1   [288]
-    pub _padding: [u8; 7],                      // 7   [289..296]
-    pub delegation_authority: Address,          // 32  [296..328]
-    pub program_bitmask: Bitmask,              // 128 [328..456]
-    pub user_bitmask: Bitmask,                 // 128 [456..584]
-    pub authority_aux_sequence: u64,           // 8   [584..592]
-    pub program_aux_sequence: u64,             // 8   [592..600]
-    pub auxiliary_data: [u8; AUX_DATA_SIZE],   // 128 [600..728]
+    pub authority: Address,                  // 32  [0..32]
+    pub oracle_state: OracleState,           // 256 [32..288]
+    pub bump: u8,                            // 1   [288]
+    pub _padding: [u8; 7],                   // 7   [289..296]
+    pub delegation_authority: Address,       // 32  [296..328]
+    pub program_bitmask: Bitmask,            // 128 [328..456]
+    pub user_bitmask: Bitmask,               // 128 [456..584]
+    pub authority_aux_sequence: u64,         // 8   [584..592]
+    pub program_aux_sequence: u64,           // 8   [592..600]
+    pub auxiliary_data: [u8; AUX_DATA_SIZE], // 128 [600..728]
 }
 
 impl Envelope {
@@ -508,17 +508,11 @@ mod tests {
     #[test]
     fn test_wincode_roundtrip_update_auxiliary() {
         let data = [42u8; AUX_DATA_SIZE];
-        let ix = SlowPathInstruction::UpdateAuxiliary {
-            sequence: 7,
-            data,
-        };
+        let ix = SlowPathInstruction::UpdateAuxiliary { sequence: 7, data };
         let serialized = wincode::serialize(&ix).unwrap();
         let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
         match deserialized {
-            SlowPathInstruction::UpdateAuxiliary {
-                sequence,
-                data: d,
-            } => {
+            SlowPathInstruction::UpdateAuxiliary { sequence, data: d } => {
                 assert_eq!(sequence, 7);
                 assert_eq!(d, data);
             }

@@ -395,10 +395,7 @@ fn test_close_happy_path() {
     );
 
     assert_eq!(result.resulting_accounts[1].1.lamports, 0);
-    assert_eq!(
-        result.resulting_accounts[2].1.lamports,
-        envelope_lamports
-    );
+    assert_eq!(result.resulting_accounts[2].1.lamports, envelope_lamports);
     assert!(result.resulting_accounts[1].1.data.iter().all(|&b| b == 0));
     assert_eq!(result.resulting_accounts[1].1.owner, pinocchio_system::ID);
 }
@@ -467,6 +464,101 @@ fn test_close_not_program_owned() {
     assert!(result.program_result.is_err());
 }
 
+#[test]
+fn test_close_delegated_rejected() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let recipient = Address::new_unique();
+    let delegation_auth = Address::new_unique();
+
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &close_instruction_data(),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new(recipient, false),
+        ],
+    );
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (recipient, create_funded_account(0)),
+        ],
+    );
+    assert!(result.program_result.is_err());
+}
+
+#[test]
+fn test_close_after_clear_delegation() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let recipient = Address::new_unique();
+    let delegation_auth = Address::new_unique();
+
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
+
+    // Step 1: ClearDelegation
+    let clear_ix = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &clear_delegation_instruction_data(),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(delegation_auth, true),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &clear_ix,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (delegation_auth, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+
+    let cleared_envelope = result.resulting_accounts[1].1.clone();
+    let envelope_lamports = cleared_envelope.lamports;
+
+    // Step 2: Close should now succeed
+    let close_ix = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &close_instruction_data(),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new(recipient, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &close_ix,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, cleared_envelope),
+            (recipient, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+
+    assert_eq!(result.resulting_accounts[1].1.lamports, 0);
+    assert_eq!(result.resulting_accounts[2].1.lamports, envelope_lamports);
+    assert!(result.resulting_accounts[1].1.data.iter().all(|&b| b == 0));
+}
+
 // -- Slow path: SetDelegatedProgram --
 
 #[test]
@@ -519,12 +611,8 @@ fn test_set_delegated_program_already_delegated() {
     let delegation_auth = Address::new_unique();
     let new_delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -628,12 +716,8 @@ fn test_clear_delegation_happy_path() {
     let envelope_pubkey = Address::new_unique();
     let delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -703,12 +787,8 @@ fn test_clear_delegation_wrong_delegation_auth() {
     let delegation_auth = Address::new_unique();
     let wrong_delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -788,12 +868,8 @@ fn test_update_auxiliary_masked_write_with_delegation() {
     let mut user_bitmask = Bitmask::ZERO;
     user_bitmask.set_bit(0);
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::ZERO,
-        user_bitmask,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::ZERO, user_bitmask);
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xAA; // allowed
@@ -838,12 +914,8 @@ fn test_update_auxiliary_masked_write_blocked() {
     let mut user_bitmask = Bitmask::ZERO;
     user_bitmask.set_bit(0);
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::ZERO,
-        user_bitmask,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::ZERO, user_bitmask);
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xAA;
@@ -942,12 +1014,8 @@ fn test_update_auxiliary_delegated_happy_path() {
     let mut program_bitmask = Bitmask::ZERO;
     program_bitmask.set_bit(0);
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        program_bitmask,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, program_bitmask, Bitmask::ZERO);
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xCC;
@@ -1023,12 +1091,8 @@ fn test_update_auxiliary_delegated_wrong_delegation_auth() {
     let wrong_delegation_auth = Address::new_unique();
     let padding = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let aux_data = [0u8; AUX_DATA_SIZE];
 
@@ -1062,12 +1126,8 @@ fn test_update_auxiliary_delegated_stale_sequence() {
     let delegation_auth = Address::new_unique();
     let padding = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let aux_data = [0u8; AUX_DATA_SIZE];
 
@@ -1129,12 +1189,8 @@ fn test_update_auxiliary_delegated_bitmask_violation() {
     let mut program_bitmask = Bitmask::ZERO;
     program_bitmask.set_bit(0);
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        program_bitmask,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, program_bitmask, Bitmask::ZERO);
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xCC;
@@ -1171,12 +1227,8 @@ fn test_update_auxiliary_force_happy_path() {
     let envelope_pubkey = Address::new_unique();
     let delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xDD;
@@ -1219,12 +1271,8 @@ fn test_update_auxiliary_force_authority_not_signer() {
     let envelope_pubkey = Address::new_unique();
     let delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let aux_data = [0u8; AUX_DATA_SIZE];
 
@@ -1290,12 +1338,8 @@ fn test_update_auxiliary_force_stale_authority_sequence() {
     let envelope_pubkey = Address::new_unique();
     let delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let aux_data = [0u8; AUX_DATA_SIZE];
 
@@ -1352,12 +1396,8 @@ fn test_update_auxiliary_force_stale_program_sequence() {
     let envelope_pubkey = Address::new_unique();
     let delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let aux_data = [0u8; AUX_DATA_SIZE];
 
@@ -1415,12 +1455,8 @@ fn test_update_auxiliary_force_wrong_delegation_auth() {
     let delegation_auth = Address::new_unique();
     let wrong_delegation_auth = Address::new_unique();
 
-    let envelope = create_delegated_envelope(
-        &authority,
-        &delegation_auth,
-        Bitmask::FULL,
-        Bitmask::ZERO,
-    );
+    let envelope =
+        create_delegated_envelope(&authority, &delegation_auth, Bitmask::FULL, Bitmask::ZERO);
 
     let aux_data = [0u8; AUX_DATA_SIZE];
 

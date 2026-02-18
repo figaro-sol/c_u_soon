@@ -2,8 +2,7 @@
 
 use bytemuck::{bytes_of, Zeroable};
 use c_u_soon::{
-    Bitmask, Envelope, OracleState, SlowPathInstruction, ENVELOPE_SEED, ORACLE_BYTES,
-    AUX_DATA_SIZE,
+    Bitmask, Envelope, OracleState, SlowPathInstruction, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
 };
 use pinocchio::Address;
 use solana_sdk::account::Account;

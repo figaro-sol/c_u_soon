@@ -31,7 +31,10 @@ pub fn process(
     }
 
     if envelope.has_delegation() {
-        if !envelope.user_bitmask.apply_masked_update(&mut envelope.auxiliary_data, data) {
+        if !envelope
+            .user_bitmask
+            .apply_masked_update(&mut envelope.auxiliary_data, data)
+        {
             return Err(ProgramError::InvalidArgument);
         }
     } else {
