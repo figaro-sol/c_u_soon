@@ -1,4 +1,4 @@
-use c_u_soon::SlowPathInstruction;
+use c_u_soon::{Bitmask, SlowPathInstruction};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
 use super::instructions;
@@ -26,6 +26,18 @@ fn process_instruction(
             instructions::create::process(program_id, accounts, custom_seeds, bump)
         }
         SlowPathInstruction::Close => instructions::close::process(program_id, accounts),
+        SlowPathInstruction::SetDelegatedProgram {
+            program_bitmask,
+            user_bitmask,
+        } => instructions::set_delegated_program::process(
+            program_id,
+            accounts,
+            &Bitmask::from(program_bitmask),
+            &Bitmask::from(user_bitmask),
+        ),
+        SlowPathInstruction::ClearDelegation => {
+            instructions::clear_delegation::process(program_id, accounts)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

@@ -81,6 +81,52 @@ pub fn close_instruction_data() -> Vec<u8> {
     wincode::serialize(&SlowPathInstruction::Close).unwrap()
 }
 
+pub fn set_delegated_program_instruction_data(
+    program_bitmask: [u8; c_u_soon::BITMASK_SIZE],
+    user_bitmask: [u8; c_u_soon::BITMASK_SIZE],
+) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::SetDelegatedProgram {
+        program_bitmask,
+        user_bitmask,
+    })
+    .unwrap()
+}
+
+pub fn clear_delegation_instruction_data() -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::ClearDelegation).unwrap()
+}
+
+pub fn create_delegated_envelope(
+    authority: &Address,
+    delegation_authority: &Address,
+    program_bitmask: Bitmask,
+    user_bitmask: Bitmask,
+) -> Account {
+    let envelope = Envelope {
+        authority: *authority,
+        oracle_state: OracleState {
+            sequence: 0,
+            data: [0u8; ORACLE_BYTES],
+            _pad: [0u8; 1],
+        },
+        bump: 0,
+        _padding: [0u8; 7],
+        delegation_authority: *delegation_authority,
+        program_bitmask,
+        user_bitmask,
+        authority_aux_sequence: 0,
+        program_aux_sequence: 0,
+        auxiliary_data: [0u8; AUX_DATA_SIZE],
+    };
+    Account {
+        lamports: 1_000_000_000,
+        data: bytes_of(&envelope).to_vec(),
+        owner: PROGRAM_ID,
+        executable: false,
+        rent_epoch: 0,
+    }
+}
+
 /// Build fast path instruction data: sequence (u64 LE) followed by raw payload bytes
 pub fn create_fast_path_instruction_data(sequence: u64, payload: &[u8]) -> Vec<u8> {
     let mut data = Vec::with_capacity(8 + payload.len());
