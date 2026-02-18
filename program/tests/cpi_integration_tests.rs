@@ -8,14 +8,39 @@ use common::{
 };
 use mollusk_svm::result::Check;
 use mollusk_svm::Mollusk;
-use pinocchio::{Address, error::ProgramError};
+use pinocchio::{error::ProgramError, Address};
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
-// -- Security Integration Tests --
-// These tests verify core security properties of c_u_soon
+// Program IDs for CPI test programs (arbitrary but stable)
+const BYTE_WRITER_ID: Address = Address::new_from_array([
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA,
+]);
+
+const ATTACKER_PROBE_ID: Address = Address::new_from_array([
+    0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+    0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+    0xBB, 0xBB,
+]);
+
+const C_U_SOON_SO_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../target/deploy/c_u_soon_program.so");
+
+const BYTE_WRITER_SO_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../test-programs/byte_writer/target/deploy/byte_writer.so"
+);
+
+const ATTACKER_PROBE_SO_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../test-programs/attacker_probe/target/deploy/attacker_probe.so"
+);
+
+// -- Mollusk Security Integration Tests --
+// These tests verify core security properties of c_u_soon using Mollusk (single-program harness)
 
 /// Test that delegated writes with bitmask restrictions are enforced
-/// When a delegation is set with restricted user_bitmask, writes outside that mask must be rejected
 #[test]
 fn test_delegated_bitmask_enforcement() {
     let _log = LOG_LOCK.read().unwrap();
@@ -26,12 +51,16 @@ fn test_delegated_bitmask_enforcement() {
     let pda = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    // Create a delegated envelope where only byte 0 can be written
     let mut user_bitmask = [0xFFu8; 128];
     user_bitmask[0] = 0x00; // Allow write to byte 0 only
     let program_bitmask = Bitmask::from([0xFFu8; 128]); // Block all program writes
 
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, program_bitmask, Bitmask::from(user_bitmask));
+    let envelope = create_delegated_envelope(
+        &authority,
+        &delegation_authority,
+        program_bitmask,
+        Bitmask::from(user_bitmask),
+    );
 
     let mut data = [0u8; AUX_DATA_SIZE];
     data[0] = 0xAA; // Allowed (byte 0)
@@ -47,7 +76,6 @@ fn test_delegated_bitmask_enforcement() {
         ],
     );
 
-    // This should fail because data[1] violates the bitmask
     mollusk.process_and_validate_instruction(
         &instruction,
         &[
@@ -60,7 +88,6 @@ fn test_delegated_bitmask_enforcement() {
 }
 
 /// Test that authorization is required for delegation modifications
-/// Only authority can set delegation
 #[test]
 fn test_delegation_requires_authority() {
     let _log = LOG_LOCK.read().unwrap();
@@ -143,10 +170,266 @@ fn test_force_update_increments_sequences() {
         &[Check::success()],
     );
 
-    // Verify both sequences were updated
-    let env: &Envelope =
-        bytemuck::from_bytes(&result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()]);
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
     assert_eq!(env.authority_aux_sequence, 5);
     assert_eq!(env.program_aux_sequence, 3);
     assert_eq!(env.auxiliary_data[0], 99);
+}
+
+// -- LiteSVM Multi-Program CPI Tests --
+// These tests verify security properties across the CPI boundary using actual SBF programs
+
+#[cfg(test)]
+mod litesvm_tests {
+    use super::*;
+    use bytemuck::bytes_of;
+    use c_u_soon::{Envelope, OracleState, StructMetadata, ORACLE_BYTES};
+    use litesvm::LiteSVM;
+    use solana_sdk::{
+        instruction::{AccountMeta, Instruction},
+        signature::Keypair,
+        signer::Signer,
+        transaction::Transaction,
+    };
+
+    fn byte_writer_fast_path_ix_data(sequence: u64, payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 1 + payload.len());
+        v.push(0x00); // UpdateViaFastPath
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.push(payload.len() as u8);
+        v.extend_from_slice(payload);
+        v
+    }
+
+    fn attacker_fast_path_without_signer(sequence: u64, payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 1 + payload.len());
+        v.push(0x00); // FastPathWithoutAuthoritySigner
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.push(payload.len() as u8);
+        v.extend_from_slice(payload);
+        v
+    }
+
+    fn attacker_fast_path_wrong_authority(sequence: u64, payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 1 + payload.len());
+        v.push(0x01); // FastPathWithWrongAuthority
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.push(payload.len() as u8);
+        v.extend_from_slice(payload);
+        v
+    }
+
+    fn attacker_slow_path_without_pda_signer(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 256);
+        v.push(0x03); // SlowPathWithoutPdaSigner
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.extend_from_slice(aux_data);
+        v
+    }
+
+    fn make_envelope(authority: &Address, seq: u64) -> solana_sdk::account::Account {
+        use bytemuck::Zeroable;
+        let envelope = Envelope {
+            authority: *authority,
+            oracle_state: OracleState {
+                sequence: seq,
+                data: [0u8; ORACLE_BYTES],
+                _pad: [0u8; 1],
+            },
+            bump: 0,
+            _padding: [0u8; 7],
+            delegation_authority: Address::zeroed(),
+            program_bitmask: Bitmask::ZERO,
+            user_bitmask: Bitmask::ZERO,
+            authority_aux_sequence: 0,
+            program_aux_sequence: 0,
+            auxiliary_metadata: StructMetadata { struct_len: 0 },
+            oracle_metadata: StructMetadata { struct_len: 0 },
+            auxiliary_data: [0u8; AUX_DATA_SIZE],
+        };
+        solana_sdk::account::Account {
+            lamports: 1_000_000_000,
+            data: bytes_of(&envelope).to_vec(),
+            owner: PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        }
+    }
+
+    fn setup_svm() -> LiteSVM {
+        let mut svm = LiteSVM::new();
+        svm.add_program_from_file(PROGRAM_ID, C_U_SOON_SO_PATH)
+            .expect("c_u_soon .so not found; run make build-sbf first");
+        svm
+    }
+
+    /// CPI via byte_writer to c_u_soon fast path succeeds
+    #[test]
+    fn test_cpi_fast_path_via_byte_writer_succeeds() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(BYTE_WRITER_ID, BYTE_WRITER_SO_PATH)
+            .expect("byte_writer .so not found; run make build-sbf-test-programs first");
+
+        let authority_kp = Keypair::new();
+        let authority_addr = authority_kp.pubkey();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
+        svm.set_account(envelope_addr, make_envelope(&authority_addr, 0))
+            .unwrap();
+
+        let ix_data = byte_writer_fast_path_ix_data(1, &[0xAB]);
+        let instruction = Instruction::new_with_bytes(
+            BYTE_WRITER_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new_readonly(authority_addr, true), // [0] authority, signer
+                AccountMeta::new(envelope_addr, false),          // [1] envelope, writable
+                AccountMeta::new_readonly(PROGRAM_ID, false),    // [2] c_u_soon program
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&authority_addr),
+            &[&authority_kp],
+            svm.latest_blockhash(),
+        );
+
+        let result = svm.send_transaction(tx);
+        assert!(result.is_ok(), "CPI fast path should succeed: {:?}", result);
+
+        let data = svm.get_account(&envelope_addr).unwrap().data;
+        let env: &Envelope = bytemuck::from_bytes(&data[..core::mem::size_of::<Envelope>()]);
+        assert_eq!(env.oracle_state.sequence, 1);
+        assert_eq!(env.oracle_state.data[0], 0xAB);
+    }
+
+    /// Attack: CPI with authority NOT marked as signer → c_u_soon rejects
+    #[test]
+    fn test_cpi_attack_without_authority_signer() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(ATTACKER_PROBE_ID, ATTACKER_PROBE_SO_PATH)
+            .expect("attacker_probe .so not found; run make build-sbf-test-programs first");
+
+        let authority_kp = Keypair::new();
+        let authority_addr = authority_kp.pubkey();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
+        svm.set_account(envelope_addr, make_envelope(&authority_addr, 0))
+            .unwrap();
+
+        // Attack: attacker_probe will mark authority as NOT signer in CPI metadata
+        let ix_data = attacker_fast_path_without_signer(1, &[0xAB]);
+        let instruction = Instruction::new_with_bytes(
+            ATTACKER_PROBE_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new_readonly(authority_addr, true), // top-level: IS signer
+                AccountMeta::new(envelope_addr, false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&authority_addr),
+            &[&authority_kp],
+            svm.latest_blockhash(),
+        );
+
+        // c_u_soon sees authority.is_signer() = false → MissingRequiredSignature
+        let result = svm.send_transaction(tx);
+        assert!(result.is_err(), "Attack without authority signer should be rejected");
+    }
+
+    /// Attack: CPI with wrong authority (not the envelope's authority) → c_u_soon rejects
+    #[test]
+    fn test_cpi_attack_wrong_authority() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(ATTACKER_PROBE_ID, ATTACKER_PROBE_SO_PATH)
+            .expect("attacker_probe .so not found; run make build-sbf-test-programs first");
+
+        let actual_authority_kp = Keypair::new();
+        let wrong_authority_kp = Keypair::new();
+        let wrong_authority_addr = wrong_authority_kp.pubkey();
+        let envelope_addr = Address::new_unique();
+
+        // Envelope has actual_authority, but wrong_authority will sign
+        svm.airdrop(&wrong_authority_addr, 1_000_000_000).unwrap();
+        svm.set_account(
+            envelope_addr,
+            make_envelope(&actual_authority_kp.pubkey(), 0),
+        )
+        .unwrap();
+
+        // Attack: pass wrong_authority as signer — it IS a signer but != envelope.authority
+        let ix_data = attacker_fast_path_wrong_authority(1, &[0xAB]);
+        let instruction = Instruction::new_with_bytes(
+            ATTACKER_PROBE_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new_readonly(wrong_authority_addr, true), // wrong authority, signer
+                AccountMeta::new(envelope_addr, false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&wrong_authority_addr),
+            &[&wrong_authority_kp],
+            svm.latest_blockhash(),
+        );
+
+        // c_u_soon sees wrong authority → IncorrectAuthority
+        let result = svm.send_transaction(tx);
+        assert!(result.is_err(), "Attack with wrong authority should be rejected");
+    }
+
+    /// Attack: UpdateAuxiliary without PDA signer when no delegation → c_u_soon rejects
+    #[test]
+    fn test_cpi_attack_slow_path_without_pda_signer() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(ATTACKER_PROBE_ID, ATTACKER_PROBE_SO_PATH)
+            .expect("attacker_probe .so not found; run make build-sbf-test-programs first");
+
+        let authority_kp = Keypair::new();
+        let authority_addr = authority_kp.pubkey();
+        let fake_pda = Keypair::new();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
+        svm.set_account(envelope_addr, make_envelope(&authority_addr, 0))
+            .unwrap();
+        svm.set_account(fake_pda.pubkey(), create_funded_account(0))
+            .unwrap();
+
+        let aux_data = [0u8; 256];
+        let ix_data = attacker_slow_path_without_pda_signer(1, &aux_data);
+        let instruction = Instruction::new_with_bytes(
+            ATTACKER_PROBE_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new_readonly(authority_addr, true),      // [0] authority, signer
+                AccountMeta::new(envelope_addr, false),               // [1] envelope, writable
+                AccountMeta::new_readonly(fake_pda.pubkey(), false),  // [2] pda, NOT signer
+                AccountMeta::new_readonly(PROGRAM_ID, false),         // [3] c_u_soon
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&authority_addr),
+            &[&authority_kp],
+            svm.latest_blockhash(),
+        );
+
+        // c_u_soon sees pda_account.is_signer() = false → MissingRequiredSignature
+        let result = svm.send_transaction(tx);
+        assert!(result.is_err(), "Attack without PDA signer should be rejected");
+    }
 }

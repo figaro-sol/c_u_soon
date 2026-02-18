@@ -15,6 +15,7 @@ pinocchio = { workspace = true, features = ["cpi"] }
 pinocchio-system = "0.5"
 
 [dev-dependencies]
+litesvm = "0.9.1"
 log = "0.4"
 mollusk-svm = "0.10"
 solana-sdk = "3.0"
