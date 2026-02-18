@@ -38,6 +38,9 @@ fn process_instruction(
         SlowPathInstruction::ClearDelegation => {
             instructions::clear_delegation::process(program_id, accounts)
         }
+        SlowPathInstruction::UpdateAuxiliary { sequence, data } => {
+            instructions::update_auxiliary::process(program_id, accounts, sequence, &data)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

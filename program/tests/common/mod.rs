@@ -127,6 +127,10 @@ pub fn create_delegated_envelope(
     }
 }
 
+pub fn update_auxiliary_instruction_data(sequence: u64, data: [u8; AUX_DATA_SIZE]) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::UpdateAuxiliary { sequence, data }).unwrap()
+}
+
 /// Build fast path instruction data: sequence (u64 LE) followed by raw payload bytes
 pub fn create_fast_path_instruction_data(sequence: u64, payload: &[u8]) -> Vec<u8> {
     let mut data = Vec::with_capacity(8 + payload.len());
