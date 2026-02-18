@@ -1,4 +1,4 @@
-.PHONY: all build-sbf test test-all test-delegation test-macro
+.PHONY: all build-sbf test test-all test-delegation test-macro test-cpi test-security
 
 all: build-sbf test-all
 
@@ -18,3 +18,10 @@ test-macro: build-sbf
 
 test-delegation: build-sbf
 	cargo test --manifest-path program/Cargo.toml --test delegation_security_tests
+
+test-cpi: build-sbf
+	cargo test --manifest-path program/Cargo.toml --test cpi_integration_tests
+
+test-security: build-sbf
+	cargo test --manifest-path program/Cargo.toml --test delegation_security_tests
+	cargo test --manifest-path program/Cargo.toml --test cpi_integration_tests

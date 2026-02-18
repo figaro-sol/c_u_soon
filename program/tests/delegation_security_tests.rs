@@ -1,10 +1,10 @@
 mod common;
 
 use bytemuck::Zeroable;
-use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE, ORACLE_BYTES};
+use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
 use common::{
     clear_delegation_instruction_data, create_delegated_envelope, create_existing_envelope,
-    create_fast_path_instruction_data, create_funded_account, set_delegated_program_instruction_data,
+    create_funded_account, set_delegated_program_instruction_data,
     update_auxiliary_delegated_instruction_data, update_auxiliary_force_instruction_data,
     update_auxiliary_instruction_data, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
 };
