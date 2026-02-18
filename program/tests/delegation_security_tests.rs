@@ -1,0 +1,349 @@
+mod common;
+
+use bytemuck::Zeroable;
+use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE, ORACLE_BYTES};
+use common::{
+    clear_delegation_instruction_data, create_delegated_envelope, create_existing_envelope,
+    create_fast_path_instruction_data, create_funded_account, set_delegated_program_instruction_data,
+    update_auxiliary_delegated_instruction_data, update_auxiliary_force_instruction_data,
+    update_auxiliary_instruction_data, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
+};
+use mollusk_svm::result::Check;
+use mollusk_svm::Mollusk;
+use pinocchio::{Address, error::ProgramError};
+use solana_sdk::instruction::{AccountMeta, Instruction};
+
+// -- Delegation Security Tests --
+
+#[test]
+fn test_set_delegated_program_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 0);
+
+    let mut program_bitmask = [0xFFu8; 128];
+    program_bitmask[0] = 0x00;
+    let mut user_bitmask = [0xFFu8; 128];
+    user_bitmask[0] = 0x00;
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &set_delegated_program_instruction_data(program_bitmask, user_bitmask),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(delegation_authority, true),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (delegation_authority, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.delegation_authority, delegation_authority);
+    assert_eq!(env.program_bitmask, Bitmask::from(program_bitmask));
+    assert_eq!(env.user_bitmask, Bitmask::from(user_bitmask));
+}
+
+#[test]
+fn test_set_delegated_program_rejects_if_delegation_exists() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let existing_delegation = Address::new_unique();
+    let new_delegation = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let existing_bitmask = Bitmask::from([0x00u8; 128]);
+    let envelope = create_delegated_envelope(&authority, &existing_delegation, existing_bitmask, existing_bitmask);
+
+    let mut new_program_bitmask = [0xFFu8; 128];
+    new_program_bitmask[0] = 0x00;
+    let mut new_user_bitmask = [0xFFu8; 128];
+    new_user_bitmask[0] = 0x00;
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &set_delegated_program_instruction_data(new_program_bitmask, new_user_bitmask),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(new_delegation, true),
+        ],
+    );
+
+    mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (new_delegation, create_funded_account(0)),
+        ],
+        &[Check::err(ProgramError::InvalidArgument)],
+    );
+}
+
+#[test]
+fn test_clear_delegation_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let bitmask = Bitmask::from([0x00u8; 128]);
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, bitmask, bitmask);
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &clear_delegation_instruction_data(),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(delegation_authority, true),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (delegation_authority, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.delegation_authority, Address::zeroed());
+    assert_eq!(env.program_bitmask, Bitmask::ZERO);
+    assert_eq!(env.user_bitmask, Bitmask::ZERO);
+    // Verify oracle_state.data and auxiliary_data are zeroed
+    assert_eq!(env.oracle_state.data, [0u8; 247]);
+    assert_eq!(env.auxiliary_data, [0u8; AUX_DATA_SIZE]);
+}
+
+#[test]
+fn test_update_auxiliary_with_delegation_applies_bitmask() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_authority = Address::new_unique();
+    let pda = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    // Only allow byte 0 to be written
+    let mut user_bitmask = [0xFFu8; 128];
+    user_bitmask[0] = 0x00;
+    let program_bitmask = Bitmask::from([0xFFu8; 128]);
+
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, program_bitmask, Bitmask::from(user_bitmask));
+
+    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    aux_data[0] = 0xAA;
+    aux_data[1] = 0xBB;
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &update_auxiliary_instruction_data(1, aux_data),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(pda, true),
+        ],
+    );
+
+    // This should fail because byte 1 is blocked by the bitmask
+    mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (pda, create_funded_account(0)),
+        ],
+        &[Check::err(ProgramError::InvalidArgument)],
+    );
+}
+
+#[test]
+fn test_update_auxiliary_delegated_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let delegation_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let authority = Address::new_unique();
+    let padding = Address::new_unique();
+
+    // Allow all writes
+    let program_bitmask = Bitmask::from([0x00u8; 128]);
+    let user_bitmask = Bitmask::from([0xFFu8; 128]);
+
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, program_bitmask, user_bitmask);
+
+    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    aux_data[0] = 0xCC;
+    aux_data[50] = 0xDD;
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &update_auxiliary_delegated_instruction_data(1, aux_data),
+        vec![
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(delegation_authority, true),
+            AccountMeta::new_readonly(padding, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (envelope_pubkey, envelope),
+            (delegation_authority, create_funded_account(0)),
+            (padding, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[0].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.auxiliary_data[0], 0xCC);
+    assert_eq!(env.auxiliary_data[50], 0xDD);
+    assert_eq!(env.program_aux_sequence, 1);
+}
+
+#[test]
+fn test_update_auxiliary_force_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let bitmask = Bitmask::from([0x00u8; 128]);
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, bitmask, bitmask);
+
+    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    aux_data[0] = 0xEE;
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &update_auxiliary_force_instruction_data(5, 10, aux_data),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(delegation_authority, true),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (delegation_authority, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.auxiliary_data[0], 0xEE);
+    assert_eq!(env.authority_aux_sequence, 5);
+    assert_eq!(env.program_aux_sequence, 10);
+}
+
+#[test]
+fn test_update_auxiliary_force_fails_without_delegation() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 0);
+
+    let aux_data = [0u8; AUX_DATA_SIZE];
+    let delegation_authority = Address::new_unique();
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &update_auxiliary_force_instruction_data(5, 10, aux_data),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(delegation_authority, true),
+        ],
+    );
+
+    mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (delegation_authority, create_funded_account(0)),
+        ],
+        &[Check::err(ProgramError::InvalidArgument)],
+    );
+}
+
+#[test]
+fn test_sequence_monotonically_increases() {
+    let _log = LOG_LOCK.read().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let pda = Address::new_unique();
+
+    // Create envelope with authority_aux_sequence = 20
+    let mut envelope_account = create_existing_envelope(&authority, 0);
+    let envelope_data_mut = &mut envelope_account.data;
+    let envelope: &mut Envelope = bytemuck::from_bytes_mut(envelope_data_mut);
+    envelope.authority_aux_sequence = 20;
+
+    let aux_data = [0xAAu8; AUX_DATA_SIZE];
+
+    // Try to write with sequence <= current sequence (10 <= 20)
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &update_auxiliary_instruction_data(10, aux_data),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(pda, true),
+        ],
+    );
+
+    mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope_account),
+            (pda, create_funded_account(0)),
+        ],
+        &[Check::err(ProgramError::InvalidInstructionData)],
+    );
+}
