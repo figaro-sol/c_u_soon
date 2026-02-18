@@ -77,6 +77,10 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
     }
 }
 
+pub fn close_instruction_data() -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::Close).unwrap()
+}
+
 /// Build fast path instruction data: sequence (u64 LE) followed by raw payload bytes
 pub fn create_fast_path_instruction_data(sequence: u64, payload: &[u8]) -> Vec<u8> {
     let mut data = Vec::with_capacity(8 + payload.len());

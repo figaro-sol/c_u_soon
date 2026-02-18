@@ -25,6 +25,7 @@ fn process_instruction(
         SlowPathInstruction::Create { custom_seeds, bump } => {
             instructions::create::process(program_id, accounts, custom_seeds, bump)
         }
+        SlowPathInstruction::Close => instructions::close::process(program_id, accounts),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

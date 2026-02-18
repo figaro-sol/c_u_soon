@@ -2,7 +2,7 @@ mod common;
 
 use c_u_soon::{Envelope, ORACLE_BYTES};
 use common::{
-    create_existing_envelope, create_existing_envelope_with_bump,
+    close_instruction_data, create_existing_envelope, create_existing_envelope_with_bump,
     create_fast_path_instruction_data, create_funded_account, create_instruction_data,
     find_envelope_pda, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
 };
@@ -356,4 +356,110 @@ fn test_fast_path_all_write_sizes() {
     }
 
     log::set_max_level(prev_log);
+}
+
+// -- Slow path: Close --
+
+#[test]
+fn test_close_happy_path() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let recipient = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 5);
+    let envelope_lamports = envelope.lamports;
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &close_instruction_data(),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new(recipient, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (recipient, create_funded_account(0)),
+        ],
+        &[Check::success()],
+    );
+
+    assert_eq!(result.resulting_accounts[1].1.lamports, 0);
+    assert_eq!(
+        result.resulting_accounts[2].1.lamports,
+        envelope_lamports
+    );
+    assert!(result.resulting_accounts[1].1.data.iter().all(|&b| b == 0));
+    assert_eq!(result.resulting_accounts[1].1.owner, pinocchio_system::ID);
+}
+
+#[test]
+fn test_close_wrong_authority() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let wrong_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let recipient = Address::new_unique();
+
+    let envelope = create_existing_envelope(&authority, 0);
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &close_instruction_data(),
+        vec![
+            AccountMeta::new_readonly(wrong_authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new(recipient, false),
+        ],
+    );
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (wrong_authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (recipient, create_funded_account(0)),
+        ],
+    );
+    assert!(result.program_result.is_err());
+}
+
+#[test]
+fn test_close_not_program_owned() {
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let recipient = Address::new_unique();
+
+    let mut envelope = create_existing_envelope(&authority, 0);
+    envelope.owner = Address::default();
+
+    let instruction = Instruction::new_with_bytes(
+        PROGRAM_ID,
+        &close_instruction_data(),
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new(recipient, false),
+        ],
+    );
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (envelope_pubkey, envelope),
+            (recipient, create_funded_account(0)),
+        ],
+    );
+    assert!(result.program_result.is_err());
 }
