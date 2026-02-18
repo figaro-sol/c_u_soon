@@ -955,7 +955,7 @@ fn test_update_auxiliary_full_write_no_delegation() {
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1002,7 +1002,7 @@ fn test_update_auxiliary_masked_write_with_delegation() {
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1049,7 +1049,7 @@ fn test_update_auxiliary_masked_write_blocked() {
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1083,7 +1083,7 @@ fn test_update_auxiliary_stale_sequence() {
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1106,7 +1106,7 @@ fn test_update_auxiliary_stale_sequence() {
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1148,7 +1148,7 @@ fn test_update_auxiliary_delegated_happy_path() {
         vec![
             AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_auth, true),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1188,7 +1188,7 @@ fn test_update_auxiliary_delegated_no_delegation() {
         vec![
             AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_auth, true),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1224,7 +1224,7 @@ fn test_update_auxiliary_delegated_wrong_delegation_auth() {
         vec![
             AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(wrong_delegation_auth, true),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1260,7 +1260,7 @@ fn test_update_auxiliary_delegated_stale_sequence() {
         vec![
             AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_auth, true),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1283,7 +1283,7 @@ fn test_update_auxiliary_delegated_stale_sequence() {
         vec![
             AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_auth, true),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 
@@ -1324,7 +1324,7 @@ fn test_update_auxiliary_delegated_bitmask_violation() {
         vec![
             AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_auth, true),
-            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(padding, true),
         ],
     );
 

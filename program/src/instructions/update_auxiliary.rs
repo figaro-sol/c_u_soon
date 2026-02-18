@@ -7,7 +7,7 @@ pub fn process(
     sequence: u64,
     data: &[u8; AUX_DATA_SIZE],
 ) -> ProgramResult {
-    let [authority, envelope_account, _padding] = accounts else {
+    let [authority, envelope_account, pda_account] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
@@ -38,6 +38,10 @@ pub fn process(
             return Err(ProgramError::InvalidArgument);
         }
     } else {
+        // When there is no delegation, require PDA account to sign
+        if !pda_account.is_signer() {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
         envelope.auxiliary_data = *data;
     }
 

@@ -2,7 +2,7 @@
 
 use bytemuck::{bytes_of, Zeroable};
 use c_u_soon::{
-    Bitmask, Envelope, OracleState, SlowPathInstruction, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
+    Bitmask, Envelope, OracleState, SlowPathInstruction, StructMetadata, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
 };
 use pinocchio::Address;
 use solana_sdk::account::Account;
@@ -65,6 +65,8 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
         user_bitmask: Bitmask::ZERO,
         authority_aux_sequence: 0,
         program_aux_sequence: 0,
+        auxiliary_metadata: StructMetadata { struct_len: 0 },
+        oracle_metadata: StructMetadata { struct_len: 0 },
         auxiliary_data: [0u8; AUX_DATA_SIZE],
     };
     Account {
@@ -115,6 +117,8 @@ pub fn create_delegated_envelope(
         user_bitmask,
         authority_aux_sequence: 0,
         program_aux_sequence: 0,
+        auxiliary_metadata: StructMetadata { struct_len: 0 },
+        oracle_metadata: StructMetadata { struct_len: 0 },
         auxiliary_data: [0u8; AUX_DATA_SIZE],
     };
     Account {

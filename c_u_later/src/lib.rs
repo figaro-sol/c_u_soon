@@ -7,7 +7,69 @@ pub use c_u_later_derive::CuLater;
 
 pub use bytemuck::{Pod, Zeroable};
 
+pub mod validation;
+
 pub const AUX_SIZE: usize = 256;
+
+/// 256-bit permission mask: 32 bytes = 256 bits (1 byte per field in auxiliary).
+/// Stored in wire format for on-chain use.
+#[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct Bitmask([u8; 32]);
+
+impl Bitmask {
+    pub const ZERO: Self = Bitmask([0; 32]);
+    pub const FULL: Self = Bitmask([0xFF; 32]);
+
+    #[inline]
+    pub fn set_bit(&mut self, bit: usize) {
+        if bit < 256 {
+            let byte = bit / 8;
+            let bit_in_byte = bit % 8;
+            self.0[byte] |= 1 << bit_in_byte;
+        }
+    }
+
+    #[inline]
+    pub fn get_bit(&self, bit: usize) -> bool {
+        if bit < 256 {
+            let byte = bit / 8;
+            let bit_in_byte = bit % 8;
+            (self.0[byte] & (1 << bit_in_byte)) != 0
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn is_write_allowed(&self, offset: usize, size: usize) -> bool {
+        (offset + size <= 256) && (offset..offset + size).all(|i| self.get_bit(i))
+    }
+}
+
+/// Convert [bool; 256] mask to Bitmask (32 bytes) for wire serialization.
+#[inline]
+pub fn bools_to_bitmask(mask: &[bool; AUX_SIZE]) -> Bitmask {
+    let mut result = Bitmask::ZERO;
+    for i in 0..256 {
+        if mask[i] {
+            result.set_bit(i);
+        }
+    }
+    result
+}
+
+/// Get on-chain representation of program write mask for a CuLater type.
+#[inline]
+pub fn to_program_bitmask<T: CuLaterMask>() -> Bitmask {
+    bools_to_bitmask(&T::program_mask())
+}
+
+/// Get on-chain representation of authority write mask for a CuLater type.
+#[inline]
+pub fn to_authority_bitmask<T: CuLaterMask>() -> Bitmask {
+    bools_to_bitmask(&T::authority_mask())
+}
 
 pub trait CuLaterMask {
     fn program_mask() -> [bool; AUX_SIZE];
@@ -222,5 +284,72 @@ mod tests {
             assert!(m16_2[i]);
         }
         assert!(!m16_2[4]);
+    }
+
+    #[test]
+    fn test_bitmask_set_get_bits() {
+        let mut mask = Bitmask::ZERO;
+        assert!(!mask.get_bit(0));
+        assert!(!mask.get_bit(255));
+
+        mask.set_bit(0);
+        assert!(mask.get_bit(0));
+        assert!(!mask.get_bit(1));
+
+        mask.set_bit(255);
+        assert!(mask.get_bit(255));
+        assert!(mask.get_bit(0));
+
+        mask.set_bit(256);
+        assert!(!mask.get_bit(256));
+    }
+
+    #[test]
+    fn test_bitmask_is_write_allowed() {
+        let mut mask = Bitmask::ZERO;
+
+        assert!(!mask.is_write_allowed(0, 1));
+        assert!(!mask.is_write_allowed(0, 256));
+
+        for i in 0..8 {
+            mask.set_bit(i);
+        }
+        assert!(mask.is_write_allowed(0, 8));
+        assert!(!mask.is_write_allowed(0, 9));
+        assert!(!mask.is_write_allowed(7, 2));
+
+        let full_mask = Bitmask::FULL;
+        assert!(full_mask.is_write_allowed(0, 256));
+        assert!(full_mask.is_write_allowed(100, 100));
+        assert!(!full_mask.is_write_allowed(255, 2));
+    }
+
+    #[test]
+    fn test_to_program_bitmask_conversion() {
+        let program_mask = u8::program_mask();
+        let bitmask = bools_to_bitmask(&program_mask);
+
+        assert!(bitmask.get_bit(0));
+        assert!(!bitmask.get_bit(1));
+    }
+
+    #[test]
+    fn test_to_authority_bitmask_conversion() {
+        let authority_mask = u16::authority_mask();
+        let bitmask = bools_to_bitmask(&authority_mask);
+
+        for i in 0..2 {
+            assert!(bitmask.get_bit(i));
+        }
+        assert!(!bitmask.get_bit(2));
+    }
+
+    #[test]
+    fn test_bitmask_roundtrip() {
+        let original = u32::program_mask();
+        let packed = bools_to_bitmask(&original);
+        let unpacked: [bool; 256] = core::array::from_fn(|i| packed.get_bit(i));
+
+        assert_eq!(original, unpacked);
     }
 }

@@ -14,8 +14,15 @@ pub const ORACLE_ACCOUNT_SIZE: usize = core::mem::size_of::<OracleState>();
 // OracleState is 256 bytes total (8 + 247 + 1 explicit pad for Pod alignment).
 pub const ORACLE_BYTES: usize = 247;
 
-pub const AUX_DATA_SIZE: usize = 128;
-pub const BITMASK_SIZE: usize = AUX_DATA_SIZE;
+pub const AUX_DATA_SIZE: usize = 256;
+pub const BITMASK_SIZE: usize = 128;
+
+/// Metadata about a struct's content (struct_len, struct_hash when macro is ready).
+#[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct StructMetadata {
+    pub struct_len: u64,
+}
 
 const _: () = assert!(
     core::mem::size_of::<OracleState>() == 256,
@@ -23,8 +30,8 @@ const _: () = assert!(
 );
 
 const _: () = assert!(
-    core::mem::size_of::<Envelope>() == 728,
-    "Envelope must be 728 bytes"
+    core::mem::size_of::<Envelope>() == 872,
+    "Envelope must be 872 bytes"
 );
 
 pub const ENVELOPE_SEED: &[u8] = b"envelope";
@@ -50,7 +57,9 @@ pub struct Envelope {
     pub user_bitmask: Bitmask,               // 128 [456..584]
     pub authority_aux_sequence: u64,         // 8   [584..592]
     pub program_aux_sequence: u64,           // 8   [592..600]
-    pub auxiliary_data: [u8; AUX_DATA_SIZE], // 128 [600..728]
+    pub auxiliary_metadata: StructMetadata,  // 8   [600..608]
+    pub oracle_metadata: StructMetadata,     // 8   [608..616]
+    pub auxiliary_data: [u8; AUX_DATA_SIZE], // 256 [616..872]
 }
 
 impl Envelope {
@@ -446,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_envelope_size() {
-        assert_eq!(core::mem::size_of::<Envelope>(), 728);
+        assert_eq!(core::mem::size_of::<Envelope>(), 872);
     }
 
     #[test]

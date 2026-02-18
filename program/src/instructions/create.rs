@@ -94,6 +94,9 @@ pub fn process(
     envelope.bump = bump;
     envelope.program_bitmask = Bitmask::ZERO;
     envelope.user_bitmask = Bitmask::ZERO;
+    // Metadata is already zeroed by Zeroable/initialization, but explicit for clarity
+    envelope.auxiliary_metadata.struct_len = 0;
+    envelope.oracle_metadata.struct_len = 0;
 
     Ok(())
 }

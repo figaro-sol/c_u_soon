@@ -32,6 +32,10 @@ pub fn process(program_id: &Address, accounts: &[AccountView]) -> ProgramResult 
     envelope.delegation_authority = Address::zeroed();
     envelope.program_bitmask = Bitmask::ZERO;
     envelope.user_bitmask = Bitmask::ZERO;
+    envelope.oracle_state.data = [0u8; 247];
+    envelope.auxiliary_data = [0u8; 256];
+    envelope.oracle_metadata.struct_len = 0;
+    envelope.auxiliary_metadata.struct_len = 0;
 
     Ok(())
 }
