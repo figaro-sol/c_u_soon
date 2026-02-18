@@ -543,6 +543,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
+name = "c_u_later"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "c_u_later_derive",
+]
+
+[[package]]
+name = "c_u_later_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.115",
+]
+
+[[package]]
 name = "c_u_soon"
 version = "0.1.0"
 dependencies = [

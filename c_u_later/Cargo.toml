@@ -1,0 +1,12 @@
+[package]
+name = "c_u_later"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["derive"]
+derive = ["dep:c_u_later_derive"]
+
+[dependencies]
+c_u_later_derive = { path = "derive", optional = true }
+bytemuck = { workspace = true }
