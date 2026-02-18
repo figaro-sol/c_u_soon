@@ -5,3 +5,4 @@ pub mod create;
 pub mod set_delegated_program;
 pub mod update_auxiliary;
 pub mod update_auxiliary_delegated;
+pub mod update_auxiliary_force;

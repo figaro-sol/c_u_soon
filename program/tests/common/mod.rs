@@ -131,6 +131,19 @@ pub fn update_auxiliary_instruction_data(sequence: u64, data: [u8; AUX_DATA_SIZE
     wincode::serialize(&SlowPathInstruction::UpdateAuxiliary { sequence, data }).unwrap()
 }
 
+pub fn update_auxiliary_force_instruction_data(
+    authority_sequence: u64,
+    program_sequence: u64,
+    data: [u8; AUX_DATA_SIZE],
+) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryForce {
+        authority_sequence,
+        program_sequence,
+        data,
+    })
+    .unwrap()
+}
+
 pub fn update_auxiliary_delegated_instruction_data(
     sequence: u64,
     data: [u8; AUX_DATA_SIZE],
