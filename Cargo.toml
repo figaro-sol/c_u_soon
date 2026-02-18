@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.84"
 license = "Apache-2.0"
-repository = "https://github.com/anza-xyz/pinocchio"
+repository = "https://github.com/figaro-sol/c_u_soon"
 
 [workspace.dependencies]
 pinocchio = { git = "ssh://git@github.com/figaro-sol/pinocchio.git", branch = "small_oracle" }
