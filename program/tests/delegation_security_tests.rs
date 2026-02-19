@@ -1,7 +1,7 @@
 mod common;
 
 use bytemuck::Zeroable;
-use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE, BITMASK_SIZE};
+use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
 use c_u_soon_client::{
     clear_delegation_instruction_data, set_delegated_program_instruction_data,
     update_auxiliary_delegated_instruction_data, update_auxiliary_force_instruction_data,
@@ -29,10 +29,10 @@ fn test_set_delegated_program_happy_path() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let mut program_bitmask = [0xFFu8; BITMASK_SIZE];
-    program_bitmask[0] = 0x00;
-    let mut user_bitmask = [0xFFu8; BITMASK_SIZE];
-    user_bitmask[0] = 0x00;
+    let mut program_bitmask = Bitmask::ZERO;
+    program_bitmask.set_bit(0);
+    let mut user_bitmask = Bitmask::ZERO;
+    user_bitmask.set_bit(0);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -58,8 +58,8 @@ fn test_set_delegated_program_happy_path() {
         &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
     );
     assert_eq!(env.delegation_authority, delegation_authority);
-    assert_eq!(env.program_bitmask, Bitmask::from(program_bitmask));
-    assert_eq!(env.user_bitmask, Bitmask::from(user_bitmask));
+    assert_eq!(env.program_bitmask, program_bitmask);
+    assert_eq!(env.user_bitmask, user_bitmask);
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn test_set_delegated_program_rejects_if_delegation_exists() {
     let new_delegation = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let existing_bitmask = Bitmask::from([0x00u8; BITMASK_SIZE]);
+    let existing_bitmask = Bitmask::FULL;
     let envelope = create_delegated_envelope(
         &authority,
         &existing_delegation,
@@ -80,10 +80,10 @@ fn test_set_delegated_program_rejects_if_delegation_exists() {
         existing_bitmask,
     );
 
-    let mut new_program_bitmask = [0xFFu8; BITMASK_SIZE];
-    new_program_bitmask[0] = 0x00;
-    let mut new_user_bitmask = [0xFFu8; BITMASK_SIZE];
-    new_user_bitmask[0] = 0x00;
+    let mut new_program_bitmask = Bitmask::ZERO;
+    new_program_bitmask.set_bit(0);
+    let mut new_user_bitmask = Bitmask::ZERO;
+    new_user_bitmask.set_bit(0);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -115,8 +115,7 @@ fn test_clear_delegation_happy_path() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let bitmask = Bitmask::from([0x00u8; BITMASK_SIZE]);
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, bitmask, bitmask);
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, Bitmask::FULL, Bitmask::FULL);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -160,15 +159,14 @@ fn test_update_auxiliary_with_delegation_applies_bitmask() {
     let envelope_pubkey = Address::new_unique();
 
     // Only allow byte 0 to be written
-    let mut user_bitmask = [0xFFu8; BITMASK_SIZE];
-    user_bitmask[0] = 0x00;
-    let program_bitmask = Bitmask::from([0xFFu8; BITMASK_SIZE]);
+    let mut user_bitmask = Bitmask::ZERO;
+    user_bitmask.set_bit(0);
 
     let envelope = create_delegated_envelope(
         &authority,
         &delegation_authority,
-        program_bitmask,
-        Bitmask::from(user_bitmask),
+        Bitmask::ZERO,
+        user_bitmask,
     );
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
@@ -207,9 +205,9 @@ fn test_update_auxiliary_delegated_happy_path() {
     let authority = Address::new_unique();
     let padding = Address::new_unique();
 
-    // Allow all writes
-    let program_bitmask = Bitmask::from([0x00u8; BITMASK_SIZE]);
-    let user_bitmask = Bitmask::from([0xFFu8; BITMASK_SIZE]);
+    // Allow all program writes, block all user writes
+    let program_bitmask = Bitmask::FULL;
+    let user_bitmask = Bitmask::ZERO;
 
     let envelope = create_delegated_envelope(
         &authority,
@@ -259,8 +257,7 @@ fn test_update_auxiliary_force_happy_path() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let bitmask = Bitmask::from([0x00u8; BITMASK_SIZE]);
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, bitmask, bitmask);
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, Bitmask::FULL, Bitmask::FULL);
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xEE;

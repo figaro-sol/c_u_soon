@@ -1,6 +1,6 @@
 mod common;
 
-use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE, BITMASK_SIZE};
+use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
 use c_u_soon_client::{
     set_delegated_program_instruction_data, update_auxiliary_force_instruction_data,
     update_auxiliary_instruction_data,
@@ -54,15 +54,14 @@ fn test_delegated_bitmask_enforcement() {
     let pda = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let mut user_bitmask = [0xFFu8; BITMASK_SIZE];
-    user_bitmask[0] = 0x00; // Allow write to byte 0 only
-    let program_bitmask = Bitmask::from([0xFFu8; BITMASK_SIZE]); // Block all program writes
+    let mut user_bitmask = Bitmask::ZERO;
+    user_bitmask.set_bit(0); // Allow write to byte 0 only
 
     let envelope = create_delegated_envelope(
         &authority,
         &delegation_authority,
-        program_bitmask,
-        Bitmask::from(user_bitmask),
+        Bitmask::ZERO, // Block all program writes
+        user_bitmask,
     );
 
     let mut data = [0u8; AUX_DATA_SIZE];
@@ -103,10 +102,10 @@ fn test_delegation_requires_authority() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let mut program_bitmask = [0xFFu8; BITMASK_SIZE];
-    program_bitmask[0] = 0x00;
-    let mut user_bitmask = [0xFFu8; BITMASK_SIZE];
-    user_bitmask[0] = 0x00;
+    let mut program_bitmask = Bitmask::ZERO;
+    program_bitmask.set_bit(0);
+    let mut user_bitmask = Bitmask::ZERO;
+    user_bitmask.set_bit(0);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -140,14 +139,11 @@ fn test_force_update_increments_sequences() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let program_bitmask = [0x00u8; BITMASK_SIZE]; // Allow all
-    let user_bitmask = [0x00u8; BITMASK_SIZE]; // Allow all
-
     let envelope = create_delegated_envelope(
         &authority,
         &delegation_authority,
-        Bitmask::from(program_bitmask),
-        Bitmask::from(user_bitmask),
+        Bitmask::FULL,
+        Bitmask::FULL,
     );
 
     let mut data = [0u8; AUX_DATA_SIZE];

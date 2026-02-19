@@ -35,7 +35,7 @@ fn test_create_happy_path() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &create_instruction_data(custom_seeds, bump, 0),
+        &create_instruction_data(custom_seeds, bump, StructMetadata::ZERO),
         account_metas,
     );
 
@@ -73,7 +73,7 @@ fn test_create_idempotent() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &create_instruction_data(custom_seeds, bump, 0),
+        &create_instruction_data(custom_seeds, bump, StructMetadata::ZERO),
         account_metas,
     );
 
@@ -114,7 +114,7 @@ fn test_create_wrong_pda() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &create_instruction_data(custom_seeds, bump, 0),
+        &create_instruction_data(custom_seeds, bump, StructMetadata::ZERO),
         account_metas,
     );
 
@@ -148,7 +148,7 @@ fn test_create_not_signer() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &create_instruction_data(custom_seeds, bump, 0),
+        &create_instruction_data(custom_seeds, bump, StructMetadata::ZERO),
         account_metas,
     );
 
@@ -747,9 +747,9 @@ fn test_set_delegated_program_happy_path() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let mut program_bitmask = [0xFFu8; c_u_soon::BITMASK_SIZE];
-    program_bitmask[0] = 0x00; // byte 0 writable by program
-    let user_bitmask = [0xFF; c_u_soon::BITMASK_SIZE]; // nothing writable by user
+    let mut program_bitmask = Bitmask::ZERO;
+    program_bitmask.set_bit(0); // byte 0 writable by program
+    let user_bitmask = Bitmask::ZERO; // nothing writable by user
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
@@ -792,10 +792,7 @@ fn test_set_delegated_program_already_delegated() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &set_delegated_program_instruction_data(
-            [0x00; c_u_soon::BITMASK_SIZE],
-            [0xFF; c_u_soon::BITMASK_SIZE],
-        ),
+        &set_delegated_program_instruction_data(Bitmask::FULL, Bitmask::ZERO),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -829,7 +826,7 @@ fn test_set_delegated_program_non_canonical_bitmask() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &set_delegated_program_instruction_data(bad_bitmask, [0xFF; c_u_soon::BITMASK_SIZE]),
+        &set_delegated_program_instruction_data(Bitmask::from(bad_bitmask), Bitmask::ZERO),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -860,10 +857,7 @@ fn test_set_delegated_program_delegation_not_signer() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &set_delegated_program_instruction_data(
-            [0x00; c_u_soon::BITMASK_SIZE],
-            [0xFF; c_u_soon::BITMASK_SIZE],
-        ),
+        &set_delegated_program_instruction_data(Bitmask::FULL, Bitmask::ZERO),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1707,8 +1701,7 @@ fn test_update_auxiliary_force_sequence_boundaries() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let bitmask = Bitmask::from([0x00u8; c_u_soon::BITMASK_SIZE]);
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, bitmask, bitmask);
+    let envelope = create_delegated_envelope(&authority, &delegation_authority, Bitmask::FULL, Bitmask::FULL);
 
     let aux_data = [0u8; AUX_DATA_SIZE];
 
