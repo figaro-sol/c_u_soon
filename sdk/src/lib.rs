@@ -5,16 +5,15 @@ use solana_address::Address;
 
 pub const ORACLE_ACCOUNT_SIZE: usize = core::mem::size_of::<OracleState>();
 
-// Fast path reads instruction_data_len as u8 (max 255 = u8::MAX).
-// A full payload is [oracle_meta: u64][sequence: u64][data: ORACLE_BYTES] = 8 + 8 + 239 = 255 bytes,
-// so data_size = 255, copying exactly the oracle_metadata + sequence + data fields of OracleState.
-// OracleState is 256 bytes total (8 + 8 + 239 + 1 explicit pad for Pod alignment).
+/// Max oracle data bytes. Fast path payload = [meta:8][seq:8][data:239] = 255 = u8::MAX.
 pub const ORACLE_BYTES: usize = 239;
 
 pub const AUX_DATA_SIZE: usize = 256;
 pub const BITMASK_SIZE: usize = 256;
 
-/// Packed oracle struct identity: bits[63:56] = type_size (u8), bits[55:0] = 56-bit hash.
+/// Packed type identity for on-chain data. bits\[63:56\] = size (u8), bits\[55:0\] = FNV-1a hash.
+///
+/// Constructed via [`TypeHash::METADATA`] or [`StructMetadata::new`].
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct StructMetadata(pub u64);
@@ -49,8 +48,7 @@ const _: () = assert!(
     "Envelope must be 1120 bytes"
 );
 
-// --- TypeHash: const-evaluable type identity for envelope data ---
-
+/// FNV-1a hash, const-evaluable. Used by [`TypeHash`] derive.
 pub const fn const_fnv1a(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x00000100000001B3;
@@ -64,11 +62,16 @@ pub const fn const_fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Combine two hashes with rotation + multiply. Used by [`TypeHash`] derive for structs.
 pub const fn combine_hash(accumulated: u64, field_hash: u64) -> u64 {
     let rotated = accumulated.rotate_left(7) ^ field_hash;
     rotated.wrapping_mul(0x517cc1b727220a95)
 }
 
+/// Const-evaluable type identity for envelope oracle/auxiliary data.
+///
+/// Derive with `#[derive(TypeHash)]` (requires `derive` feature).
+/// Primitives and `[T; N]` arrays have built-in impls.
 pub trait TypeHash: Pod + Zeroable {
     const TYPE_HASH: u64;
     const METADATA: StructMetadata;
@@ -101,6 +104,9 @@ pub use c_u_soon_derive::TypeHash;
 pub const ENVELOPE_SEED: &[u8] = b"envelope";
 pub const MAX_CUSTOM_SEEDS: usize = 13;
 
+/// Oracle data region (256 bytes). Layout: `[meta:8][seq:8][data:239][pad:1]`.
+///
+/// Fast path copies the first 255 bytes (meta+seq+data) directly from instruction data.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct OracleState {
@@ -110,6 +116,20 @@ pub struct OracleState {
     pub _paddingdata: [u8; 1],
 }
 
+/// On-chain envelope account (1120 bytes). Contains oracle, delegation, bitmasks, and aux data.
+///
+/// Field layout (byte offsets):
+/// - `[0..32]`     authority
+/// - `[32..288]`   oracle_state (256 bytes)
+/// - `[288]`       bump
+/// - `[289..296]`  padding
+/// - `[296..328]`  delegation_authority (zeroed = no delegation)
+/// - `[328..584]`  program_bitmask
+/// - `[584..840]`  user_bitmask
+/// - `[840..848]`  authority_aux_sequence
+/// - `[848..856]`  program_aux_sequence
+/// - `[856..864]`  auxiliary_metadata
+/// - `[864..1120]` auxiliary_data
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct Envelope {
@@ -179,12 +199,24 @@ impl Envelope {
     }
 }
 
+/// Per-byte access control mask for auxiliary data (256 bytes).
+///
+/// Storage polarity: `0x00` = writable, `0xFF` = blocked. Only canonical values
+/// (`0x00`/`0xFF`) are accepted on-chain.
+///
+/// - [`Bitmask::ZERO`] — all blocked (default for new envelopes)
+/// - [`Bitmask::FULL`] — all writable
+///
+/// Construct via [`Bitmask::from`], [`Bitmask::ZERO`], [`Bitmask::FULL`], or
+/// [`set_bit`](Bitmask::set_bit)/[`clear_bit`](Bitmask::clear_bit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Zeroable, Pod)]
 #[repr(transparent)]
-pub struct Bitmask(pub [u8; BITMASK_SIZE]);
+pub struct Bitmask([u8; BITMASK_SIZE]);
 
 impl Bitmask {
+    /// All blocked (0xFF). Default for new envelopes.
     pub const ZERO: Self = Self([0xFF; BITMASK_SIZE]);
+    /// All writable (0x00).
     pub const FULL: Self = Self([0x00; BITMASK_SIZE]);
 
     #[inline]
@@ -197,6 +229,7 @@ impl Bitmask {
         Self::FULL
     }
 
+    /// Mark byte at `byte_idx` as writable (0x00).
     #[inline]
     pub fn set_bit(&mut self, byte_idx: usize) {
         if byte_idx >= BITMASK_SIZE {
@@ -205,6 +238,7 @@ impl Bitmask {
         self.0[byte_idx] = 0x00;
     }
 
+    /// Mark byte at `byte_idx` as blocked (0xFF).
     #[inline]
     pub fn clear_bit(&mut self, byte_idx: usize) {
         if byte_idx >= BITMASK_SIZE {
@@ -213,6 +247,7 @@ impl Bitmask {
         self.0[byte_idx] = 0xFF;
     }
 
+    /// Returns `true` if byte at `byte_idx` is writable.
     #[inline]
     pub fn get_bit(&self, byte_idx: usize) -> bool {
         if byte_idx >= BITMASK_SIZE {
@@ -226,6 +261,12 @@ impl Bitmask {
         &self.0
     }
 
+    #[inline]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8; BITMASK_SIZE] {
+        &mut self.0
+    }
+
+    /// Returns `true` if all bytes are blocked.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0 == [0xFF; BITMASK_SIZE]
@@ -305,8 +346,10 @@ impl From<Bitmask> for [u8; BITMASK_SIZE] {
     }
 }
 
-/// Parse seeds from instruction data.
-/// Format: [num_seeds: u8][len: u8][data...]...[bump: u8]
+/// Parse PDA seeds from instruction data.
+///
+/// Wire format: `[num_seeds: u8][len: u8][data...]...[bump: u8]`.
+/// Each seed is max 32 bytes, max 13 seeds.
 pub fn parse_seeds(data: &[u8]) -> Option<(SeedParser<'_>, u8)> {
     if data.is_empty() {
         return None;

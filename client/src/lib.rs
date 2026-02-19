@@ -1,6 +1,7 @@
 use c_u_soon::{Bitmask, StructMetadata, TypeHash, AUX_DATA_SIZE};
 use c_u_soon_client_common::SlowPathInstruction;
 
+/// Build fast path instruction data: `[meta:8][seq:8][payload]`.
 pub fn fast_path_instruction_data(oracle_meta: u64, sequence: u64, payload: &[u8]) -> Vec<u8> {
     let mut data = Vec::with_capacity(8 + 8 + payload.len());
     data.extend_from_slice(&oracle_meta.to_le_bytes());
@@ -9,6 +10,7 @@ pub fn fast_path_instruction_data(oracle_meta: u64, sequence: u64, payload: &[u8
     data
 }
 
+/// Serialize a Create instruction (slow path).
 pub fn create_instruction_data(
     custom_seeds: &[&[u8]],
     bump: u8,
@@ -23,10 +25,12 @@ pub fn create_instruction_data(
     wincode::serialize(&ix).unwrap()
 }
 
+/// Serialize a Close instruction (slow path).
 pub fn close_instruction_data() -> Vec<u8> {
     wincode::serialize(&SlowPathInstruction::Close).unwrap()
 }
 
+/// Serialize a SetDelegatedProgram instruction (slow path).
 pub fn set_delegated_program_instruction_data(
     program_bitmask: Bitmask,
     user_bitmask: Bitmask,
@@ -38,14 +42,17 @@ pub fn set_delegated_program_instruction_data(
     .unwrap()
 }
 
+/// Serialize a ClearDelegation instruction (slow path).
 pub fn clear_delegation_instruction_data() -> Vec<u8> {
     wincode::serialize(&SlowPathInstruction::ClearDelegation).unwrap()
 }
 
+/// Serialize an UpdateAuxiliary instruction (slow path, authority writes).
 pub fn update_auxiliary_instruction_data(sequence: u64, data: [u8; AUX_DATA_SIZE]) -> Vec<u8> {
     wincode::serialize(&SlowPathInstruction::UpdateAuxiliary { sequence, data }).unwrap()
 }
 
+/// Serialize an UpdateAuxiliaryForce instruction (slow path, authority overrides both seqs).
 pub fn update_auxiliary_force_instruction_data(
     authority_sequence: u64,
     program_sequence: u64,
@@ -59,6 +66,7 @@ pub fn update_auxiliary_force_instruction_data(
     .unwrap()
 }
 
+/// Serialize an UpdateAuxiliaryDelegated instruction (slow path, delegation program writes).
 pub fn update_auxiliary_delegated_instruction_data(
     sequence: u64,
     data: [u8; AUX_DATA_SIZE],
@@ -66,10 +74,12 @@ pub fn update_auxiliary_delegated_instruction_data(
     wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data }).unwrap()
 }
 
+/// Typed Create: uses `T::METADATA` as oracle metadata.
 pub fn create_envelope_typed<T: TypeHash>(custom_seeds: &[&[u8]], bump: u8) -> Vec<u8> {
     create_instruction_data(custom_seeds, bump, T::METADATA)
 }
 
+/// Typed fast path: serializes `value` as oracle payload with `T::METADATA`.
 pub fn fast_path_update_typed<T: TypeHash>(sequence: u64, value: &T) -> Vec<u8> {
     fast_path_instruction_data(T::METADATA.0, sequence, bytemuck::bytes_of(value))
 }
