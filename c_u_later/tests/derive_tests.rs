@@ -769,8 +769,7 @@ fn wire_mask_authority() {
 }
 
 #[test]
-#[should_panic(expected = "on-chain bitmask only covers")]
-fn wire_mask_panics_on_out_of_range() {
+fn wire_mask_big_struct_allowed() {
     #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
     #[repr(C)]
     struct Big {
@@ -779,5 +778,7 @@ fn wire_mask_panics_on_out_of_range() {
         rest: [u8; 56],
     }
 
-    let _ = c_u_later::to_program_wire_mask::<Big>();
+    let wire = c_u_later::to_program_wire_mask::<Big>();
+    assert!(wire.is_write_allowed(0, 200));
+    assert!(!wire.is_write_allowed(200, 1));
 }
