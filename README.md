@@ -33,7 +33,7 @@ let ix_data = fast_path_update_typed::<PriceData>(next_sequence, &price);
 ## Workspace
 
 ```
-sdk/              c_u_soon              core types (Envelope, Bitmask, TypeHash), no_std
+sdk/              c_u_soon              core types (Envelope, Mask, TypeHash), no_std
 client/           c_u_soon_client       off-chain instruction builders
 instruction/      c_u_soon_instruction    shared instruction types
 cpi/              c_u_soon_cpi          on-chain CPI helpers (invoke_fast_path, invoke_update_*)
@@ -87,11 +87,11 @@ Both the fast and slow data slots carry a `StructMetadata` tag: 8 bits of type s
 
 ## Delegation and slow data
 
-Envelopes support delegation: you register a program as the `delegation_authority`, and it can read/write the 256-byte slow data section via CPI. Two 256-byte bitmasks control which bytes each party can write. `program_bitmask` restricts the delegated program, `user_bitmask` restricts the authority. Each byte in the mask is either `0x00` (writable) or `0xFF` (blocked).
+Envelopes support delegation: you register a program as the `delegation_authority`, and it can read/write the 256-byte slow data section via CPI. Two 256-byte masks control which bytes each party can write. `program_bitmask` restricts the delegated program, `user_bitmask` restricts the authority. Each byte in the mask is either `0x00` (writable) or `0xFF` (blocked).
 
 ### c_u_later
 
-The `c_u_later` crate generates these bitmasks from struct definitions:
+The `c_u_later` crate generates these masks from struct definitions:
 
 ```rust
 use c_u_later::CuLater;
@@ -111,7 +111,7 @@ struct AmmState {
 }
 ```
 
-Convert to on-chain bitmask format:
+Convert to on-chain mask format:
 
 ```rust
 use c_u_later::{to_program_wire_mask, to_authority_wire_mask};

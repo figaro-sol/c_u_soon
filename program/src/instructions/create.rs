@@ -1,7 +1,7 @@
 extern crate alloc;
 use crate::pda::create_program_address;
 use alloc::vec::Vec;
-use c_u_soon::{Bitmask, Envelope, StructMetadata, ENVELOPE_SEED};
+use c_u_soon::{Envelope, Mask, StructMetadata, ENVELOPE_SEED};
 use pinocchio::{
     cpi::{Seed, Signer},
     error::ProgramError,
@@ -93,8 +93,8 @@ pub fn process(
     let envelope: &mut Envelope = bytemuck::from_bytes_mut(&mut envelope_data);
     envelope.authority = *authority.address();
     envelope.bump = bump;
-    envelope.program_bitmask = Bitmask::ZERO;
-    envelope.user_bitmask = Bitmask::ZERO;
+    envelope.program_bitmask = Mask::ALL_BLOCKED;
+    envelope.user_bitmask = Mask::ALL_BLOCKED;
     envelope.auxiliary_metadata = StructMetadata::ZERO;
     envelope.oracle_state.oracle_metadata = StructMetadata::from_raw(oracle_metadata);
 

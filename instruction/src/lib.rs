@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use c_u_soon::{AUX_DATA_SIZE, BITMASK_SIZE, MAX_CUSTOM_SEEDS};
+use c_u_soon::{AUX_DATA_SIZE, MASK_SIZE, MAX_CUSTOM_SEEDS};
 use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(Debug, Clone, SchemaWrite, SchemaRead)]
@@ -15,8 +15,8 @@ pub enum SlowPathInstruction {
     },
     Close,
     SetDelegatedProgram {
-        program_bitmask: [u8; BITMASK_SIZE],
-        user_bitmask: [u8; BITMASK_SIZE],
+        program_bitmask: [u8; MASK_SIZE],
+        user_bitmask: [u8; MASK_SIZE],
     },
     ClearDelegation,
     UpdateAuxiliary {
@@ -66,17 +66,17 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_non_canonical_bitmask() {
-        let mut program_bitmask = [0x00u8; BITMASK_SIZE];
+        let mut program_bitmask = [0x00u8; MASK_SIZE];
         program_bitmask[5] = 0x42;
-        let user_bitmask = [0xFF; BITMASK_SIZE];
+        let user_bitmask = [0xFF; MASK_SIZE];
         let ix = SlowPathInstruction::SetDelegatedProgram {
             program_bitmask,
             user_bitmask,
         };
         assert!(!ix.validate());
 
-        let program_bitmask = [0x00u8; BITMASK_SIZE];
-        let mut user_bitmask = [0xFF; BITMASK_SIZE];
+        let program_bitmask = [0x00u8; MASK_SIZE];
+        let mut user_bitmask = [0xFF; MASK_SIZE];
         user_bitmask[10] = 0x01;
         let ix = SlowPathInstruction::SetDelegatedProgram {
             program_bitmask,
@@ -85,8 +85,8 @@ mod tests {
         assert!(!ix.validate());
 
         let ix = SlowPathInstruction::SetDelegatedProgram {
-            program_bitmask: [0x00; BITMASK_SIZE],
-            user_bitmask: [0xFF; BITMASK_SIZE],
+            program_bitmask: [0x00; MASK_SIZE],
+            user_bitmask: [0xFF; MASK_SIZE],
         };
         assert!(ix.validate());
     }

@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use crate::{Bitmask, CuLaterMask, AUX_SIZE};
+use crate::{BitVec256, CuLaterMask, AUX_SIZE};
 use alloc::vec::Vec;
 
 /// Validate that a change from old to new is permitted by the given mask.
@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 /// 1. Allowed by the mask (mask.get_bit(i) == true), or
 /// 2. The byte didn't change (old[i] == new[i])
 #[inline]
-pub fn validate_change(old: &[u8], new: &[u8], mask: &Bitmask) -> bool {
+pub(crate) fn validate_change(old: &[u8], new: &[u8], mask: &BitVec256) -> bool {
     if old.len() != new.len() {
         return false;
     }
@@ -24,14 +24,14 @@ pub fn validate_change(old: &[u8], new: &[u8], mask: &Bitmask) -> bool {
 /// Validate that a change respects the program write mask for type T.
 #[inline]
 pub fn validate_program_change<T: CuLaterMask>(old: &[u8], new: &[u8]) -> bool {
-    let mask = crate::to_program_bitmask::<T>();
+    let mask = crate::to_program_bitvec::<T>();
     validate_change(old, new, &mask)
 }
 
 /// Validate that a change respects the authority write mask for type T.
 #[inline]
 pub fn validate_authority_change<T: CuLaterMask>(old: &[u8], new: &[u8]) -> bool {
-    let mask = crate::to_authority_bitmask::<T>();
+    let mask = crate::to_authority_bitvec::<T>();
     validate_change(old, new, &mask)
 }
 
@@ -55,8 +55,8 @@ pub struct ChangeReport {
 
 /// Generate a detailed change report comparing old and new auxiliary data.
 pub fn diff_report<T: CuLaterMask>(old: &[u8], new: &[u8]) -> ChangeReport {
-    let program_mask = crate::to_program_bitmask::<T>();
-    let authority_mask = crate::to_authority_bitmask::<T>();
+    let program_mask = crate::to_program_bitvec::<T>();
+    let authority_mask = crate::to_authority_bitvec::<T>();
 
     let mut changes = Vec::new();
     for i in 0..old.len().min(new.len()).min(AUX_SIZE) {
@@ -85,11 +85,11 @@ pub fn diff_report<T: CuLaterMask>(old: &[u8], new: &[u8]) -> ChangeReport {
 ///
 /// A byte is marked as constant if neither the program nor the authority
 /// is allowed to write to it.
-pub fn constant_mask<T: CuLaterMask>() -> Bitmask {
-    let program_mask = crate::to_program_bitmask::<T>();
-    let authority_mask = crate::to_authority_bitmask::<T>();
+pub(crate) fn constant_mask<T: CuLaterMask>() -> BitVec256 {
+    let program_mask = crate::to_program_bitvec::<T>();
+    let authority_mask = crate::to_authority_bitvec::<T>();
 
-    let mut result = Bitmask::ZERO;
+    let mut result = BitVec256::ZERO;
     for i in 0..256 {
         if !program_mask.get_bit(i) && !authority_mask.get_bit(i) {
             result.set_bit(i);
@@ -115,12 +115,12 @@ mod tests {
         let mut new = [0u8; 256];
         new[0] = 1;
 
-        let mut mask = Bitmask::ZERO;
+        let mut mask = BitVec256::ZERO;
         mask.set_bit(0);
 
         assert!(validate_change(&old, &new, &mask));
 
-        let no_mask = Bitmask::ZERO;
+        let no_mask = BitVec256::ZERO;
         assert!(!validate_change(&old, &new, &no_mask));
     }
 
@@ -128,7 +128,7 @@ mod tests {
     fn test_validate_change_no_changes() {
         let old = [42u8; 256];
         let new = [42u8; 256];
-        let no_mask = Bitmask::ZERO;
+        let no_mask = BitVec256::ZERO;
 
         assert!(validate_change(&old, &new, &no_mask));
     }
@@ -137,7 +137,7 @@ mod tests {
     fn test_validate_change_mismatched_lengths() {
         let old = [0u8; 256];
         let new = [0u8; 100];
-        let full_mask = Bitmask::FULL;
+        let full_mask = BitVec256::FULL;
 
         assert!(!validate_change(&old, &new, &full_mask));
     }

@@ -1,6 +1,9 @@
 #![no_std]
 
+extern crate alloc;
+
 use c_u_soon::{AUX_DATA_SIZE, ORACLE_BYTES};
+use c_u_soon_instruction::SlowPathInstruction;
 use pinocchio::{
     cpi::invoke,
     error::ProgramError,
@@ -8,12 +11,6 @@ use pinocchio::{
     AccountView, ProgramResult,
 };
 
-pub const UPDATE_AUX_DISC: u32 = 4;
-pub const UPDATE_AUX_DELEGATED_DISC: u32 = 5;
-pub const UPDATE_AUX_FORCE_DISC: u32 = 6;
-
-const SLOW_AUX_SIZE: usize = 4 + 8 + AUX_DATA_SIZE; // 268
-const SLOW_AUX_FORCE_SIZE: usize = 4 + 8 + 8 + AUX_DATA_SIZE; // 276
 const FAST_PATH_MAX: usize = 8 + 8 + ORACLE_BYTES; // 255
 
 /// CPI: fast path oracle update.
@@ -58,10 +55,11 @@ pub fn invoke_update_auxiliary(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut buf = [0u8; SLOW_AUX_SIZE];
-    buf[..4].copy_from_slice(&UPDATE_AUX_DISC.to_le_bytes());
-    buf[4..12].copy_from_slice(&sequence.to_le_bytes());
-    buf[12..12 + AUX_DATA_SIZE].copy_from_slice(data);
+    let ix_enum = SlowPathInstruction::UpdateAuxiliary {
+        sequence,
+        data: *data,
+    };
+    let buf = wincode::serialize(&ix_enum).map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let cpi_accounts = [
         InstructionAccount::readonly_signer(accounts[0].address()),
@@ -86,10 +84,11 @@ pub fn invoke_update_auxiliary_delegated(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut buf = [0u8; SLOW_AUX_SIZE];
-    buf[..4].copy_from_slice(&UPDATE_AUX_DELEGATED_DISC.to_le_bytes());
-    buf[4..12].copy_from_slice(&sequence.to_le_bytes());
-    buf[12..12 + AUX_DATA_SIZE].copy_from_slice(data);
+    let ix_enum = SlowPathInstruction::UpdateAuxiliaryDelegated {
+        sequence,
+        data: *data,
+    };
+    let buf = wincode::serialize(&ix_enum).map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let cpi_accounts = [
         InstructionAccount::writable(accounts[0].address()),
@@ -115,11 +114,12 @@ pub fn invoke_update_auxiliary_force(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut buf = [0u8; SLOW_AUX_FORCE_SIZE];
-    buf[..4].copy_from_slice(&UPDATE_AUX_FORCE_DISC.to_le_bytes());
-    buf[4..12].copy_from_slice(&authority_sequence.to_le_bytes());
-    buf[12..20].copy_from_slice(&program_sequence.to_le_bytes());
-    buf[20..20 + AUX_DATA_SIZE].copy_from_slice(data);
+    let ix_enum = SlowPathInstruction::UpdateAuxiliaryForce {
+        authority_sequence,
+        program_sequence,
+        data: *data,
+    };
+    let buf = wincode::serialize(&ix_enum).map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let cpi_accounts = [
         InstructionAccount::readonly_signer(accounts[0].address()),

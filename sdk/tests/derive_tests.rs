@@ -33,18 +33,16 @@ struct Nested {
 }
 
 #[test]
-fn same_layout_same_hash() {
+fn same_fields_same_hash() {
+    // Same field names + types in same order → same hash
     assert_eq!(PairA::TYPE_HASH, PairB::TYPE_HASH);
     assert_eq!(PairA::METADATA, PairB::METADATA);
 }
 
 #[test]
 fn reorder_different_hash() {
-    // PairA is (u32, u32) - same types in same order, but Reordered
-    // has field names swapped. Since TypeHash hashes field *types* not names,
-    // two structs with identical field types in identical order have the same hash.
-    // Reordered has (u32, u32) in the same order, so same hash.
-    // To test reorder sensitivity, use different types:
+    // Field names are included in hash, so swapping field order changes the hash
+    // even with same types
     #[derive(Clone, Copy, Pod, Zeroable, TypeHash)]
     #[repr(C)]
     struct AB {
@@ -65,14 +63,19 @@ fn reorder_different_hash() {
 }
 
 #[test]
+fn same_types_different_names_different_hash() {
+    // PairA has fields (x: u32, y: u32), Reordered has (y: u32, x: u32)
+    // Same types but field name order differs → different hash
+    assert_ne!(PairA::TYPE_HASH, Reordered::TYPE_HASH);
+}
+
+#[test]
 fn nested_works() {
-    let expected = combine_hash(
-        combine_hash(
-            combine_hash(const_fnv1a(b"__struct_init__"), PairA::TYPE_HASH),
-            u16::TYPE_HASH,
-        ),
-        u16::TYPE_HASH,
-    );
+    // Hash formula: for each field, combine_hash(combine_hash(acc, fnv1a(name)), type_hash)
+    let acc = const_fnv1a(b"__struct_init__");
+    let acc = combine_hash(combine_hash(acc, const_fnv1a(b"inner")), PairA::TYPE_HASH);
+    let acc = combine_hash(combine_hash(acc, const_fnv1a(b"z")), u16::TYPE_HASH);
+    let expected = combine_hash(combine_hash(acc, const_fnv1a(b"w")), u16::TYPE_HASH);
     assert_eq!(Nested::TYPE_HASH, expected);
 }
 

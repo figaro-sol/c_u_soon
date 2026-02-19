@@ -1,6 +1,6 @@
 mod common;
 
-use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
+use c_u_soon::{Envelope, Mask, AUX_DATA_SIZE};
 use c_u_soon_client::{
     set_delegated_program_instruction_data, update_auxiliary_force_instruction_data,
     update_auxiliary_instruction_data,
@@ -54,13 +54,13 @@ fn test_delegated_bitmask_enforcement() {
     let pda = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let mut user_bitmask = Bitmask::ZERO;
-    user_bitmask.set_bit(0); // Allow write to byte 0 only
+    let mut user_bitmask = Mask::ALL_BLOCKED;
+    user_bitmask.allow(0); // Allow write to byte 0 only
 
     let envelope = create_delegated_envelope(
         &authority,
         &delegation_authority,
-        Bitmask::ZERO, // Block all program writes
+        Mask::ALL_BLOCKED, // Block all program writes
         user_bitmask,
     );
 
@@ -70,7 +70,7 @@ fn test_delegated_bitmask_enforcement() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, data),
+        &update_auxiliary_instruction_data(1, data).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -102,14 +102,14 @@ fn test_delegation_requires_authority() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let mut program_bitmask = Bitmask::ZERO;
-    program_bitmask.set_bit(0);
-    let mut user_bitmask = Bitmask::ZERO;
-    user_bitmask.set_bit(0);
+    let mut program_bitmask = Mask::ALL_BLOCKED;
+    program_bitmask.allow(0);
+    let mut user_bitmask = Mask::ALL_BLOCKED;
+    user_bitmask.allow(0);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &set_delegated_program_instruction_data(program_bitmask, user_bitmask),
+        &set_delegated_program_instruction_data(program_bitmask, user_bitmask).unwrap(),
         vec![
             AccountMeta::new_readonly(imposter, true), // Wrong authority
             AccountMeta::new(envelope_pubkey, false),
@@ -142,8 +142,8 @@ fn test_force_update_increments_sequences() {
     let envelope = create_delegated_envelope(
         &authority,
         &delegation_authority,
-        Bitmask::FULL,
-        Bitmask::FULL,
+        Mask::ALL_WRITABLE,
+        Mask::ALL_WRITABLE,
     );
 
     let mut data = [0u8; AUX_DATA_SIZE];
@@ -151,7 +151,7 @@ fn test_force_update_increments_sequences() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(5, 3, data),
+        &update_auxiliary_force_instruction_data(5, 3, data).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -247,13 +247,13 @@ mod litesvm_tests {
                 oracle_metadata: StructMetadata::ZERO,
                 sequence: seq,
                 data: [0u8; ORACLE_BYTES],
-                _paddingdata: [0u8; 1],
+                _pad: [0u8; 1],
             },
             bump: 0,
             _padding: [0u8; 7],
             delegation_authority: Address::zeroed(),
-            program_bitmask: Bitmask::ZERO,
-            user_bitmask: Bitmask::ZERO,
+            program_bitmask: Mask::ALL_BLOCKED,
+            user_bitmask: Mask::ALL_BLOCKED,
             authority_aux_sequence: 0,
             program_aux_sequence: 0,
             auxiliary_metadata: StructMetadata::ZERO,

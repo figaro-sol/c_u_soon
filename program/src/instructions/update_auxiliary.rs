@@ -31,6 +31,7 @@ pub fn process(
     }
 
     if envelope.has_delegation() {
+        // pda_account is unused when delegated — bitmask enforces access control instead
         if !envelope
             .user_bitmask
             .apply_masked_update(&mut envelope.auxiliary_data, data)

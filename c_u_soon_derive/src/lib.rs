@@ -44,9 +44,13 @@ fn derive_type_hash_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     for field in fields.iter() {
         let field_ty = &field.ty;
+        let field_name = field.ident.as_ref().unwrap().to_string();
         hash_expr = quote! {
             ::c_u_soon::combine_hash(
-                #hash_expr,
+                ::c_u_soon::combine_hash(
+                    #hash_expr,
+                    ::c_u_soon::const_fnv1a(#field_name.as_bytes()),
+                ),
                 <#field_ty as ::c_u_soon::TypeHash>::TYPE_HASH,
             )
         };
@@ -55,10 +59,16 @@ fn derive_type_hash_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
     let expanded = quote! {
         impl ::c_u_soon::TypeHash for #name {
             const TYPE_HASH: u64 = #hash_expr;
-            const METADATA: ::c_u_soon::StructMetadata = ::c_u_soon::StructMetadata::new(
-                ::core::mem::size_of::<Self>() as u8,
-                Self::TYPE_HASH,
-            );
+            const METADATA: ::c_u_soon::StructMetadata = {
+                assert!(
+                    ::core::mem::size_of::<Self>() <= 255,
+                    "TypeHash: struct size exceeds u8 max"
+                );
+                ::c_u_soon::StructMetadata::new(
+                    ::core::mem::size_of::<Self>() as u8,
+                    Self::TYPE_HASH,
+                )
+            };
         }
     };
 

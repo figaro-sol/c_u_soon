@@ -2,7 +2,7 @@
 
 use bytemuck::{bytes_of, Zeroable};
 use c_u_soon::{
-    Bitmask, Envelope, OracleState, StructMetadata, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
+    Envelope, Mask, OracleState, StructMetadata, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
 };
 use pinocchio::Address;
 use solana_sdk::account::Account;
@@ -47,13 +47,13 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
             oracle_metadata: StructMetadata::ZERO,
             sequence: seq,
             data: [0u8; ORACLE_BYTES],
-            _paddingdata: [0u8; 1],
+            _pad: [0u8; 1],
         },
         bump,
         _padding: [0u8; 7],
         delegation_authority: Address::zeroed(),
-        program_bitmask: Bitmask::ZERO,
-        user_bitmask: Bitmask::ZERO,
+        program_bitmask: Mask::ALL_BLOCKED,
+        user_bitmask: Mask::ALL_BLOCKED,
         authority_aux_sequence: 0,
         program_aux_sequence: 0,
         auxiliary_metadata: StructMetadata::ZERO,
@@ -71,8 +71,8 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
 pub fn create_delegated_envelope(
     authority: &Address,
     delegation_authority: &Address,
-    program_bitmask: Bitmask,
-    user_bitmask: Bitmask,
+    program_bitmask: Mask,
+    user_bitmask: Mask,
 ) -> Account {
     let envelope = Envelope {
         authority: *authority,
@@ -80,7 +80,7 @@ pub fn create_delegated_envelope(
             oracle_metadata: StructMetadata::ZERO,
             sequence: 0,
             data: [0u8; ORACLE_BYTES],
-            _paddingdata: [0u8; 1],
+            _pad: [0u8; 1],
         },
         bump: 0,
         _padding: [0u8; 7],

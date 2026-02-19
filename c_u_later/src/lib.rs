@@ -7,19 +7,20 @@ pub use c_u_later_derive::CuLater;
 
 pub use bytemuck::{Pod, Zeroable};
 
+#[cfg(feature = "alloc")]
 pub mod validation;
 
 pub const AUX_SIZE: usize = 256;
 
-/// 256-bit permission mask: 32 bytes = 256 bits (1 byte per field in auxiliary).
-/// Stored in wire format for on-chain use.
+/// Compact 256-bit permission mask (32 bytes, 1 bit per aux byte).
+/// Internal to c_u_later — use `to_program_wire_mask`/`to_authority_wire_mask` for on-chain format.
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub struct Bitmask([u8; 32]);
+pub(crate) struct BitVec256([u8; 32]);
 
-impl Bitmask {
-    pub const ZERO: Self = Bitmask([0; 32]);
-    pub const FULL: Self = Bitmask([0xFF; 32]);
+impl BitVec256 {
+    pub(crate) const ZERO: Self = BitVec256([0; 32]);
+    pub(crate) const FULL: Self = BitVec256([0xFF; 32]);
 
     #[inline]
     pub fn set_bit(&mut self, bit: usize) {
@@ -47,10 +48,10 @@ impl Bitmask {
     }
 }
 
-/// Convert [bool; 256] mask to Bitmask (32 bytes) for wire serialization.
+/// Convert [bool; 256] mask to BitVec256 (32 bytes).
 #[inline]
-pub fn bools_to_bitmask(mask: &[bool; AUX_SIZE]) -> Bitmask {
-    let mut result = Bitmask::ZERO;
+pub(crate) fn bools_to_bitvec(mask: &[bool; AUX_SIZE]) -> BitVec256 {
+    let mut result = BitVec256::ZERO;
     for i in 0..256 {
         if mask[i] {
             result.set_bit(i);
@@ -59,16 +60,16 @@ pub fn bools_to_bitmask(mask: &[bool; AUX_SIZE]) -> Bitmask {
     result
 }
 
-/// Get on-chain representation of program write mask for a CuLater type.
+/// Get compact 256-bit program write mask for a CuLater type.
 #[inline]
-pub fn to_program_bitmask<T: CuLaterMask>() -> Bitmask {
-    bools_to_bitmask(&T::program_mask())
+pub(crate) fn to_program_bitvec<T: CuLaterMask>() -> BitVec256 {
+    bools_to_bitvec(&T::program_mask())
 }
 
-/// Get on-chain representation of authority write mask for a CuLater type.
+/// Get compact 256-bit authority write mask for a CuLater type.
 #[inline]
-pub fn to_authority_bitmask<T: CuLaterMask>() -> Bitmask {
-    bools_to_bitmask(&T::authority_mask())
+pub(crate) fn to_authority_bitvec<T: CuLaterMask>() -> BitVec256 {
+    bools_to_bitvec(&T::authority_mask())
 }
 
 pub trait CuLaterMask {
@@ -158,26 +159,26 @@ impl<T: CuLaterMask, const N: usize> CuLaterMask for [T; N] {
     }
 }
 
-/// Convert a CuLaterMask program mask to c_u_soon on-chain Bitmask format.
+/// Convert a CuLaterMask program mask to c_u_soon on-chain Mask format.
 /// Polarity: true (writable) → 0x00, false (blocked) → 0xFF.
-pub fn to_program_wire_mask<T: CuLaterMask>() -> c_u_soon::Bitmask {
+pub fn to_program_wire_mask<T: CuLaterMask>() -> c_u_soon::Mask {
     bools_to_wire_mask(&T::program_mask())
 }
 
-/// Convert a CuLaterMask authority mask to c_u_soon on-chain Bitmask format.
+/// Convert a CuLaterMask authority mask to c_u_soon on-chain Mask format.
 /// Polarity: true (writable) → 0x00, false (blocked) → 0xFF.
-pub fn to_authority_wire_mask<T: CuLaterMask>() -> c_u_soon::Bitmask {
+pub fn to_authority_wire_mask<T: CuLaterMask>() -> c_u_soon::Mask {
     bools_to_wire_mask(&T::authority_mask())
 }
 
-fn bools_to_wire_mask(mask: &[bool; AUX_SIZE]) -> c_u_soon::Bitmask {
-    let mut wire = [0xFFu8; c_u_soon::BITMASK_SIZE];
-    for i in 0..c_u_soon::BITMASK_SIZE {
+fn bools_to_wire_mask(mask: &[bool; AUX_SIZE]) -> c_u_soon::Mask {
+    let mut wire = [0xFFu8; c_u_soon::MASK_SIZE];
+    for i in 0..c_u_soon::MASK_SIZE {
         if mask[i] {
             wire[i] = 0x00;
         }
     }
-    c_u_soon::Bitmask::from(wire)
+    c_u_soon::Mask::from(wire)
 }
 
 pub struct IsCuLaterWrapper<T> {
@@ -310,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_bitmask_set_get_bits() {
-        let mut mask = Bitmask::ZERO;
+        let mut mask = BitVec256::ZERO;
         assert!(!mask.get_bit(0));
         assert!(!mask.get_bit(255));
 
@@ -328,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_bitmask_is_write_allowed() {
-        let mut mask = Bitmask::ZERO;
+        let mut mask = BitVec256::ZERO;
 
         assert!(!mask.is_write_allowed(0, 1));
         assert!(!mask.is_write_allowed(0, 256));
@@ -340,7 +341,7 @@ mod tests {
         assert!(!mask.is_write_allowed(0, 9));
         assert!(!mask.is_write_allowed(7, 2));
 
-        let full_mask = Bitmask::FULL;
+        let full_mask = BitVec256::FULL;
         assert!(full_mask.is_write_allowed(0, 256));
         assert!(full_mask.is_write_allowed(100, 100));
         assert!(!full_mask.is_write_allowed(255, 2));
@@ -349,7 +350,7 @@ mod tests {
     #[test]
     fn test_to_program_bitmask_conversion() {
         let program_mask = u8::program_mask();
-        let bitmask = bools_to_bitmask(&program_mask);
+        let bitmask = bools_to_bitvec(&program_mask);
 
         assert!(bitmask.get_bit(0));
         assert!(!bitmask.get_bit(1));
@@ -358,7 +359,7 @@ mod tests {
     #[test]
     fn test_to_authority_bitmask_conversion() {
         let authority_mask = u16::authority_mask();
-        let bitmask = bools_to_bitmask(&authority_mask);
+        let bitmask = bools_to_bitvec(&authority_mask);
 
         for i in 0..2 {
             assert!(bitmask.get_bit(i));
@@ -369,7 +370,7 @@ mod tests {
     #[test]
     fn test_bitmask_roundtrip() {
         let original = u32::program_mask();
-        let packed = bools_to_bitmask(&original);
+        let packed = bools_to_bitvec(&original);
         let unpacked: [bool; 256] = core::array::from_fn(|i| packed.get_bit(i));
 
         assert_eq!(original, unpacked);

@@ -1,4 +1,4 @@
-use c_u_soon::Bitmask;
+use c_u_soon::Mask;
 use c_u_soon_instruction::SlowPathInstruction;
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
@@ -37,8 +37,8 @@ fn process_instruction(
         } => instructions::set_delegated_program::process(
             program_id,
             accounts,
-            &Bitmask::from(program_bitmask),
-            &Bitmask::from(user_bitmask),
+            &Mask::from(program_bitmask),
+            &Mask::from(user_bitmask),
         ),
         SlowPathInstruction::ClearDelegation => {
             instructions::clear_delegation::process(program_id, accounts)

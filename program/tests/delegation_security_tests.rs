@@ -1,7 +1,7 @@
 mod common;
 
 use bytemuck::Zeroable;
-use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
+use c_u_soon::{Envelope, Mask, AUX_DATA_SIZE};
 use c_u_soon_client::{
     clear_delegation_instruction_data, set_delegated_program_instruction_data,
     update_auxiliary_delegated_instruction_data, update_auxiliary_force_instruction_data,
@@ -29,14 +29,14 @@ fn test_set_delegated_program_happy_path() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let mut program_bitmask = Bitmask::ZERO;
-    program_bitmask.set_bit(0);
-    let mut user_bitmask = Bitmask::ZERO;
-    user_bitmask.set_bit(0);
+    let mut program_bitmask = Mask::ALL_BLOCKED;
+    program_bitmask.allow(0);
+    let mut user_bitmask = Mask::ALL_BLOCKED;
+    user_bitmask.allow(0);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &set_delegated_program_instruction_data(program_bitmask, user_bitmask),
+        &set_delegated_program_instruction_data(program_bitmask, user_bitmask).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -72,7 +72,7 @@ fn test_set_delegated_program_rejects_if_delegation_exists() {
     let new_delegation = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let existing_bitmask = Bitmask::FULL;
+    let existing_bitmask = Mask::ALL_WRITABLE;
     let envelope = create_delegated_envelope(
         &authority,
         &existing_delegation,
@@ -80,14 +80,14 @@ fn test_set_delegated_program_rejects_if_delegation_exists() {
         existing_bitmask,
     );
 
-    let mut new_program_bitmask = Bitmask::ZERO;
-    new_program_bitmask.set_bit(0);
-    let mut new_user_bitmask = Bitmask::ZERO;
-    new_user_bitmask.set_bit(0);
+    let mut new_program_bitmask = Mask::ALL_BLOCKED;
+    new_program_bitmask.allow(0);
+    let mut new_user_bitmask = Mask::ALL_BLOCKED;
+    new_user_bitmask.allow(0);
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &set_delegated_program_instruction_data(new_program_bitmask, new_user_bitmask),
+        &set_delegated_program_instruction_data(new_program_bitmask, new_user_bitmask).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -115,11 +115,16 @@ fn test_clear_delegation_happy_path() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, Bitmask::FULL, Bitmask::FULL);
+    let envelope = create_delegated_envelope(
+        &authority,
+        &delegation_authority,
+        Mask::ALL_WRITABLE,
+        Mask::ALL_WRITABLE,
+    );
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &clear_delegation_instruction_data(),
+        &clear_delegation_instruction_data().unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -141,8 +146,8 @@ fn test_clear_delegation_happy_path() {
         &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
     );
     assert_eq!(env.delegation_authority, Address::zeroed());
-    assert_eq!(env.program_bitmask, Bitmask::ZERO);
-    assert_eq!(env.user_bitmask, Bitmask::ZERO);
+    assert_eq!(env.program_bitmask, Mask::ALL_BLOCKED);
+    assert_eq!(env.user_bitmask, Mask::ALL_BLOCKED);
     // Verify oracle_state.data and auxiliary_data are zeroed
     assert_eq!(env.oracle_state.data, [0u8; c_u_soon::ORACLE_BYTES]);
     assert_eq!(env.auxiliary_data, [0u8; AUX_DATA_SIZE]);
@@ -159,13 +164,13 @@ fn test_update_auxiliary_with_delegation_applies_bitmask() {
     let envelope_pubkey = Address::new_unique();
 
     // Only allow byte 0 to be written
-    let mut user_bitmask = Bitmask::ZERO;
-    user_bitmask.set_bit(0);
+    let mut user_bitmask = Mask::ALL_BLOCKED;
+    user_bitmask.allow(0);
 
     let envelope = create_delegated_envelope(
         &authority,
         &delegation_authority,
-        Bitmask::ZERO,
+        Mask::ALL_BLOCKED,
         user_bitmask,
     );
 
@@ -175,7 +180,7 @@ fn test_update_auxiliary_with_delegation_applies_bitmask() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, aux_data),
+        &update_auxiliary_instruction_data(1, aux_data).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -206,8 +211,8 @@ fn test_update_auxiliary_delegated_happy_path() {
     let padding = Address::new_unique();
 
     // Allow all program writes, block all user writes
-    let program_bitmask = Bitmask::FULL;
-    let user_bitmask = Bitmask::ZERO;
+    let program_bitmask = Mask::ALL_WRITABLE;
+    let user_bitmask = Mask::ALL_BLOCKED;
 
     let envelope = create_delegated_envelope(
         &authority,
@@ -222,7 +227,7 @@ fn test_update_auxiliary_delegated_happy_path() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data),
+        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
         vec![
             AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_authority, true),
@@ -257,14 +262,19 @@ fn test_update_auxiliary_force_happy_path() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, Bitmask::FULL, Bitmask::FULL);
+    let envelope = create_delegated_envelope(
+        &authority,
+        &delegation_authority,
+        Mask::ALL_WRITABLE,
+        Mask::ALL_WRITABLE,
+    );
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xEE;
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(5, 10, aux_data),
+        &update_auxiliary_force_instruction_data(5, 10, aux_data).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -305,7 +315,7 @@ fn test_update_auxiliary_force_fails_without_delegation() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(5, 10, aux_data),
+        &update_auxiliary_force_instruction_data(5, 10, aux_data).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -344,7 +354,7 @@ fn test_sequence_monotonically_increases() {
     // Try to write with sequence <= current sequence (10 <= 20)
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(10, aux_data),
+        &update_auxiliary_instruction_data(10, aux_data).unwrap(),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),

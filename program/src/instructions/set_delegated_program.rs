@@ -1,12 +1,12 @@
 use bytemuck::Zeroable;
-use c_u_soon::{Bitmask, Envelope};
+use c_u_soon::{Envelope, Mask};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
 pub fn process(
     program_id: &Address,
     accounts: &[AccountView],
-    program_bitmask: &Bitmask,
-    user_bitmask: &Bitmask,
+    program_bitmask: &Mask,
+    user_bitmask: &Mask,
 ) -> ProgramResult {
     let [authority, envelope_account, delegation_authority] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -31,7 +31,7 @@ pub fn process(
         return Err(ProgramError::InvalidArgument);
     }
 
-    if !envelope.program_bitmask.is_empty() || !envelope.user_bitmask.is_empty() {
+    if !envelope.program_bitmask.is_all_blocked() || !envelope.user_bitmask.is_all_blocked() {
         return Err(ProgramError::InvalidAccountData);
     }
 

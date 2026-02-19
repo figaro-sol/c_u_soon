@@ -6,4 +6,4 @@ license = { workspace = true }
 
 [dependencies]
 c_u_soon = { path = "../sdk" }
-wincode = { workspace = true }
+wincode = { workspace = true, features = ["alloc"] }

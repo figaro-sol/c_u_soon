@@ -9,7 +9,7 @@ pub const ORACLE_ACCOUNT_SIZE: usize = core::mem::size_of::<OracleState>();
 pub const ORACLE_BYTES: usize = 239;
 
 pub const AUX_DATA_SIZE: usize = 256;
-pub const BITMASK_SIZE: usize = 256;
+pub const MASK_SIZE: usize = 256;
 
 /// Packed type identity for on-chain data. bits\[63:56\] = size (u8), bits\[55:0\] = FNV-1a hash.
 ///
@@ -80,8 +80,10 @@ pub const fn combine_hash(accumulated: u64, field_hash: u64) -> u64 {
 
 /// Const-evaluable type identity for envelope oracle/auxiliary data.
 ///
-/// Derive with `#[derive(TypeHash)]` (requires `derive` feature).
+/// Hash is computed over field names and field types (for derived structs), so
+/// structs with identical layout but different field names produce different hashes.
 /// Primitives and `[T; N]` arrays have built-in impls.
+/// Derive with `#[derive(TypeHash)]` (requires `derive` feature).
 pub trait TypeHash: Pod + Zeroable {
     const TYPE_HASH: u64;
     const METADATA: StructMetadata;
@@ -104,8 +106,11 @@ impl_type_hash_primitive!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32,
 impl<T: TypeHash, const N: usize> TypeHash for [T; N] {
     const TYPE_HASH: u64 =
         combine_hash(combine_hash(const_fnv1a(b"array"), T::TYPE_HASH), N as u64);
-    const METADATA: StructMetadata =
-        StructMetadata::new((core::mem::size_of::<T>() * N) as u8, Self::TYPE_HASH);
+    const METADATA: StructMetadata = {
+        let size = core::mem::size_of::<T>() * N;
+        assert!(size <= 255, "TypeHash: array size exceeds u8 max");
+        StructMetadata::new(size as u8, Self::TYPE_HASH)
+    };
 }
 
 #[cfg(feature = "derive")]
@@ -123,7 +128,7 @@ pub struct OracleState {
     pub oracle_metadata: StructMetadata, // 8   (Envelope[32..40])
     pub sequence: u64,
     pub data: [u8; ORACLE_BYTES],
-    pub _paddingdata: [u8; 1],
+    pub _pad: [u8; 1],
 }
 
 /// On-chain envelope account (1120 bytes). Contains oracle, delegation, bitmasks, and aux data.
@@ -148,8 +153,8 @@ pub struct Envelope {
     pub bump: u8,                            // 1   [288]
     pub _padding: [u8; 7],                   // 7   [289..296]
     pub delegation_authority: Address,       // 32  [296..328]
-    pub program_bitmask: Bitmask,            // 256 [328..584]
-    pub user_bitmask: Bitmask,               // 256 [584..840]
+    pub program_bitmask: Mask,               // 256 [328..584]
+    pub user_bitmask: Mask,                  // 256 [584..840]
     pub authority_aux_sequence: u64,         // 8   [840..848]
     pub program_aux_sequence: u64,           // 8   [848..856]
     pub auxiliary_metadata: StructMetadata,  // 8   [856..864]
@@ -214,35 +219,22 @@ impl Envelope {
 /// Storage polarity: `0x00` = writable, `0xFF` = blocked. Only canonical values
 /// (`0x00`/`0xFF`) are accepted on-chain.
 ///
-/// - [`Bitmask::ZERO`] — all blocked (default for new envelopes)
-/// - [`Bitmask::FULL`] — all writable
-///
-/// Construct via [`Bitmask::from`], [`Bitmask::ZERO`], [`Bitmask::FULL`], or
-/// [`set_bit`](Bitmask::set_bit)/[`clear_bit`](Bitmask::clear_bit).
+/// - [`Mask::ALL_BLOCKED`] — all blocked (default for new envelopes)
+/// - [`Mask::ALL_WRITABLE`] — all writable
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Zeroable, Pod)]
 #[repr(transparent)]
-pub struct Bitmask([u8; BITMASK_SIZE]);
+pub struct Mask([u8; MASK_SIZE]);
 
-impl Bitmask {
+impl Mask {
     /// All blocked (0xFF). Default for new envelopes.
-    pub const ZERO: Self = Self([0xFF; BITMASK_SIZE]);
+    pub const ALL_BLOCKED: Self = Self([0xFF; MASK_SIZE]);
     /// All writable (0x00).
-    pub const FULL: Self = Self([0x00; BITMASK_SIZE]);
-
-    #[inline]
-    pub const fn new() -> Self {
-        Self::ZERO
-    }
-
-    #[inline]
-    pub const fn full() -> Self {
-        Self::FULL
-    }
+    pub const ALL_WRITABLE: Self = Self([0x00; MASK_SIZE]);
 
     /// Mark byte at `byte_idx` as writable (0x00).
     #[inline]
-    pub fn set_bit(&mut self, byte_idx: usize) {
-        if byte_idx >= BITMASK_SIZE {
+    pub fn allow(&mut self, byte_idx: usize) {
+        if byte_idx >= MASK_SIZE {
             return;
         }
         self.0[byte_idx] = 0x00;
@@ -250,8 +242,8 @@ impl Bitmask {
 
     /// Mark byte at `byte_idx` as blocked (0xFF).
     #[inline]
-    pub fn clear_bit(&mut self, byte_idx: usize) {
-        if byte_idx >= BITMASK_SIZE {
+    pub fn block(&mut self, byte_idx: usize) {
+        if byte_idx >= MASK_SIZE {
             return;
         }
         self.0[byte_idx] = 0xFF;
@@ -259,27 +251,27 @@ impl Bitmask {
 
     /// Returns `true` if byte at `byte_idx` is writable.
     #[inline]
-    pub fn get_bit(&self, byte_idx: usize) -> bool {
-        if byte_idx >= BITMASK_SIZE {
+    pub fn is_writable(&self, byte_idx: usize) -> bool {
+        if byte_idx >= MASK_SIZE {
             return false;
         }
         self.0[byte_idx] == 0x00
     }
 
     #[inline]
-    pub fn as_bytes(&self) -> &[u8; BITMASK_SIZE] {
+    pub fn as_bytes(&self) -> &[u8; MASK_SIZE] {
         &self.0
     }
 
     #[inline]
-    pub fn as_bytes_mut(&mut self) -> &mut [u8; BITMASK_SIZE] {
+    pub fn as_bytes_mut(&mut self) -> &mut [u8; MASK_SIZE] {
         &mut self.0
     }
 
     /// Returns `true` if all bytes are blocked.
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0 == [0xFF; BITMASK_SIZE]
+    pub fn is_all_blocked(&self) -> bool {
+        self.0 == [0xFF; MASK_SIZE]
     }
 
     #[inline]
@@ -295,7 +287,7 @@ impl Bitmask {
             return false;
         }
         for byte_idx in offset..end {
-            if !self.get_bit(byte_idx) {
+            if !self.is_writable(byte_idx) {
                 return false;
             }
         }
@@ -338,21 +330,21 @@ impl Bitmask {
     }
 }
 
-impl Default for Bitmask {
+impl Default for Mask {
     fn default() -> Self {
-        Self::new()
+        Self::ALL_BLOCKED
     }
 }
 
-impl From<[u8; BITMASK_SIZE]> for Bitmask {
-    fn from(bytes: [u8; BITMASK_SIZE]) -> Self {
+impl From<[u8; MASK_SIZE]> for Mask {
+    fn from(bytes: [u8; MASK_SIZE]) -> Self {
         Self(bytes)
     }
 }
 
-impl From<Bitmask> for [u8; BITMASK_SIZE] {
-    fn from(bitmask: Bitmask) -> Self {
-        bitmask.0
+impl From<Mask> for [u8; MASK_SIZE] {
+    fn from(mask: Mask) -> Self {
+        mask.0
     }
 }
 
@@ -427,11 +419,11 @@ impl<'a> Iterator for SeedParser<'a> {
 
 impl SeedParser<'_> {
     pub fn len(&self) -> usize {
-        self.num_seeds
+        self.num_seeds - self.current
     }
 
     pub fn is_empty(&self) -> bool {
-        self.num_seeds == 0
+        self.current >= self.num_seeds
     }
 }
 
@@ -604,7 +596,7 @@ mod tests {
         let mut src = [0u8; AUX_DATA_SIZE];
         src[0] = 0xAA;
         src[50] = 0xBB;
-        assert!(Bitmask::FULL.apply_masked_update(&mut dest, &src));
+        assert!(Mask::ALL_WRITABLE.apply_masked_update(&mut dest, &src));
         assert_eq!(dest[0], 0xAA);
         assert_eq!(dest[50], 0xBB);
     }
@@ -614,16 +606,16 @@ mod tests {
         let mut dest = [0u8; AUX_DATA_SIZE];
         let mut src = [0u8; AUX_DATA_SIZE];
         src[0] = 1;
-        assert!(!Bitmask::ZERO.apply_masked_update(&mut dest, &src));
+        assert!(!Mask::ALL_BLOCKED.apply_masked_update(&mut dest, &src));
         assert_eq!(dest[0], 0);
     }
 
     #[test]
     fn test_bitmask_partial_update() {
         let mut dest = [0u8; AUX_DATA_SIZE];
-        let mut bitmask = Bitmask::ZERO;
-        bitmask.set_bit(1);
-        bitmask.set_bit(2);
+        let mut bitmask = Mask::ALL_BLOCKED;
+        bitmask.allow(1);
+        bitmask.allow(2);
 
         let mut src = [0u8; AUX_DATA_SIZE];
         src[1] = 0xAA;
@@ -683,27 +675,27 @@ mod tests {
 
     #[test]
     fn test_bitmask_high_offset_set_get() {
-        let mut bitmask = Bitmask::ZERO;
-        assert!(!bitmask.get_bit(128));
-        assert!(!bitmask.get_bit(200));
-        assert!(!bitmask.get_bit(255));
+        let mut bitmask = Mask::ALL_BLOCKED;
+        assert!(!bitmask.is_writable(128));
+        assert!(!bitmask.is_writable(200));
+        assert!(!bitmask.is_writable(255));
 
-        bitmask.set_bit(128);
-        bitmask.set_bit(200);
-        bitmask.set_bit(255);
+        bitmask.allow(128);
+        bitmask.allow(200);
+        bitmask.allow(255);
 
-        assert!(bitmask.get_bit(128));
-        assert!(bitmask.get_bit(200));
-        assert!(bitmask.get_bit(255));
-        assert!(!bitmask.get_bit(127)); // adjacent untouched
-        assert!(!bitmask.get_bit(129)); // adjacent untouched
+        assert!(bitmask.is_writable(128));
+        assert!(bitmask.is_writable(200));
+        assert!(bitmask.is_writable(255));
+        assert!(!bitmask.is_writable(127)); // adjacent untouched
+        assert!(!bitmask.is_writable(129)); // adjacent untouched
     }
 
     #[test]
     fn test_apply_masked_update_high_offsets_writable() {
-        let mut bitmask = Bitmask::ZERO;
+        let mut bitmask = Mask::ALL_BLOCKED;
         for i in 128..256 {
-            bitmask.set_bit(i);
+            bitmask.allow(i);
         }
 
         let mut dest = [0u8; AUX_DATA_SIZE];
@@ -720,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_apply_masked_update_high_offsets_blocked() {
-        let bitmask = Bitmask::ZERO; // all blocked
+        let bitmask = Mask::ALL_BLOCKED; // all blocked
 
         let mut dest = [0u8; AUX_DATA_SIZE];
         let mut src = [0u8; AUX_DATA_SIZE];
@@ -732,11 +724,11 @@ mod tests {
 
     #[test]
     fn test_apply_masked_update_mixed_high_low() {
-        let mut bitmask = Bitmask::ZERO;
-        bitmask.set_bit(0);   // low writable
-        bitmask.set_bit(1);   // low writable
-        bitmask.set_bit(200); // high writable
-        bitmask.set_bit(255); // high writable
+        let mut bitmask = Mask::ALL_BLOCKED;
+        bitmask.allow(0); // low writable
+        bitmask.allow(1); // low writable
+        bitmask.allow(200); // high writable
+        bitmask.allow(255); // high writable
 
         let mut dest = [0u8; AUX_DATA_SIZE];
         let mut src = [0u8; AUX_DATA_SIZE];

@@ -35,6 +35,7 @@ pub fn process(program_id: &Address, accounts: &[AccountView]) -> ProgramResult 
     envelope_account.set_lamports(0);
     recipient.set_lamports(recipient_lamports + envelope_lamports);
 
+    envelope_account.resize(0)?;
     unsafe { envelope_account.assign(&pinocchio_system::ID) };
 
     Ok(())

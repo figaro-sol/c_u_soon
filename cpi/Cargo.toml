@@ -6,4 +6,6 @@ license = { workspace = true }
 
 [dependencies]
 c_u_soon = { path = "../sdk" }
+c_u_soon_instruction = { path = "../instruction" }
 pinocchio = { workspace = true, features = ["cpi"] }
+wincode = { workspace = true, default-features = false, features = ["alloc"] }

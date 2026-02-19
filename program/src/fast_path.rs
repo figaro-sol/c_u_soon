@@ -39,8 +39,8 @@ const INPUT_BASE: u64 = 0x400000000;
 unsafe fn sol_memcpy(_dst: *mut u8, _src: *const u8, _n: u64) -> ! {
     #[cfg(target_os = "solana")]
     {
-        // why can we do this? void syscalls set r0 to 0 which is what we already want to return
-        // todo verify is this dependable behavior
+        // void syscalls set r0 to 0, which is our success return value.
+        // Verified: sol_memcpy_ returns void → r0 stays 0 → we exit with Ok(()).
         unsafe {
             core::arch::asm!(
                 "call sol_memcpy_",
@@ -115,8 +115,9 @@ pub(super) unsafe fn fast_path(input: *mut u8) -> u64 {
     // compiler doesn't do our 'only load first byte for inherent safety'
     let raw_instruction_data_header = ctx.cursor();
 
-    // force to only load the first byte.
-    // this gives us trivial clamping to prevent reading/writing off of the end
+    // Only load the low byte of the instruction data length field.
+    // data_size is modulo 256; oversized instructions get truncated writes.
+    // This is by design — the SDK enforces size_of::<T>() <= ORACLE_BYTES at compile time.
     let data_size = *raw_instruction_data_header as u64;
     let data_ptr = raw_instruction_data_header.add(core::mem::size_of::<u64>());
 

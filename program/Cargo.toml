@@ -11,7 +11,7 @@ crate-type = ["cdylib", "lib"]
 c_u_soon = { path = "../sdk" }
 c_u_soon_instruction = { path = "../instruction" }
 bytemuck = { workspace = true }
-wincode = { workspace = true }
+wincode = { workspace = true, features = ["std"] }
 pinocchio = { workspace = true, features = ["cpi"] }
 pinocchio-system = "0.5"
 

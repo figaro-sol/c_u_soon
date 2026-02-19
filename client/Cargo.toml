@@ -8,4 +8,4 @@ license = { workspace = true }
 c_u_soon = { path = "../sdk" }
 c_u_soon_instruction = { path = "../instruction" }
 bytemuck = { workspace = true }
-wincode = { workspace = true }
+wincode = { workspace = true, features = ["std"] }

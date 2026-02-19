@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["derive"]
+default = ["derive", "alloc"]
 derive = ["dep:c_u_later_derive"]
+alloc = []
 
 [dependencies]
 c_u_later_derive = { path = "derive", optional = true }

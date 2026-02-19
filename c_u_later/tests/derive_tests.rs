@@ -742,10 +742,20 @@ fn wire_mask_polarity() {
     // Simple: bytes 0-3 readonly, 4-5 writable, 6 writable, 7 not writable
     // Wire polarity: writable=0x00, blocked=0xFF
     for i in 0..4 {
-        assert_eq!(wire.as_bytes()[i], 0xFF, "byte {} should be blocked (0xFF)", i);
+        assert_eq!(
+            wire.as_bytes()[i],
+            0xFF,
+            "byte {} should be blocked (0xFF)",
+            i
+        );
     }
     for i in 4..7 {
-        assert_eq!(wire.as_bytes()[i], 0x00, "byte {} should be writable (0x00)", i);
+        assert_eq!(
+            wire.as_bytes()[i],
+            0x00,
+            "byte {} should be writable (0x00)",
+            i
+        );
     }
 }
 

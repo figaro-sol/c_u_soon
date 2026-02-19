@@ -1,6 +1,6 @@
 use super::cpi_verification::verify_delegation_authority;
 use bytemuck::Zeroable;
-use c_u_soon::{Bitmask, Envelope, OracleState, StructMetadata};
+use c_u_soon::{Envelope, Mask, OracleState, StructMetadata};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
 pub fn process(program_id: &Address, accounts: &[AccountView]) -> ProgramResult {
@@ -30,8 +30,8 @@ pub fn process(program_id: &Address, accounts: &[AccountView]) -> ProgramResult 
     verify_delegation_authority(delegation_authority, &envelope.delegation_authority)?;
 
     envelope.delegation_authority = Address::zeroed();
-    envelope.program_bitmask = Bitmask::ZERO;
-    envelope.user_bitmask = Bitmask::ZERO;
+    envelope.program_bitmask = Mask::ALL_BLOCKED;
+    envelope.user_bitmask = Mask::ALL_BLOCKED;
     envelope.oracle_state = OracleState::zeroed();
     envelope.auxiliary_data = [0u8; 256];
     envelope.auxiliary_metadata = StructMetadata::ZERO;
