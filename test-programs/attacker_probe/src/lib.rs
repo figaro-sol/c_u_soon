@@ -10,11 +10,11 @@ use pinocchio::{
 /// Attack instruction variants for security testing.
 /// Format: [discriminant: u8][fields...]
 ///
-/// 0x00: FastPathWithoutAuthoritySigner [seq: u64 LE][payload_len: u8][payload bytes]
+/// 0x00: FastPathWithoutAuthoritySigner [oracle_meta: u64 LE][seq: u64 LE][payload_len: u8][payload bytes]
 ///   Accounts: [0]=authority, [1]=envelope(writable), [2]=c_u_soon_program
 ///   Attack: marks authority as NOT signer → c_u_soon rejects MissingRequiredSignature
 ///
-/// 0x01: FastPathWithWrongAuthority [seq: u64 LE][payload_len: u8][payload bytes]
+/// 0x01: FastPathWithWrongAuthority [oracle_meta: u64 LE][seq: u64 LE][payload_len: u8][payload bytes]
 ///   Accounts: [0]=wrong_authority(signer), [1]=envelope(writable), [2]=c_u_soon_program
 ///   Attack: passes wrong authority (different from envelope.authority) → c_u_soon rejects IncorrectAuthority
 ///
@@ -26,7 +26,7 @@ use pinocchio::{
 ///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=pda_account(NOT signer), [3]=c_u_soon_program
 ///   Attack: pda_account not signer when no delegation → c_u_soon rejects MissingRequiredSignature
 ///
-/// 0x04: StaleSequence [seq: u64 LE][payload_len: u8][payload bytes]
+/// 0x04: StaleSequence [oracle_meta: u64 LE][seq: u64 LE][payload_len: u8][payload bytes]
 ///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=c_u_soon_program
 ///   Attack: sequence <= envelope.oracle_state.sequence → c_u_soon rejects InvalidInstructionData
 ///
@@ -46,28 +46,30 @@ pub fn process_instruction(
     }
     match instruction_data[0] {
         0x00 => {
-            if instruction_data.len() < 10 {
+            if instruction_data.len() < 18 {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            let payload_len = instruction_data[9] as usize;
-            if instruction_data.len() < 10 + payload_len {
+            let oracle_meta = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let sequence = u64::from_le_bytes(instruction_data[9..17].try_into().unwrap());
+            let payload_len = instruction_data[17] as usize;
+            if instruction_data.len() < 18 + payload_len {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let payload = &instruction_data[10..10 + payload_len];
-            fast_path_without_authority_signer(accounts, sequence, payload)
+            let payload = &instruction_data[18..18 + payload_len];
+            fast_path_without_authority_signer(accounts, oracle_meta, sequence, payload)
         }
         0x01 => {
-            if instruction_data.len() < 10 {
+            if instruction_data.len() < 18 {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            let payload_len = instruction_data[9] as usize;
-            if instruction_data.len() < 10 + payload_len {
+            let oracle_meta = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let sequence = u64::from_le_bytes(instruction_data[9..17].try_into().unwrap());
+            let payload_len = instruction_data[17] as usize;
+            if instruction_data.len() < 18 + payload_len {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let payload = &instruction_data[10..10 + payload_len];
-            fast_path_with_wrong_authority(accounts, sequence, payload)
+            let payload = &instruction_data[18..18 + payload_len];
+            fast_path_with_wrong_authority(accounts, oracle_meta, sequence, payload)
         }
         0x02 => {
             if instruction_data.len() < 1 + 8 + 256 {
@@ -86,16 +88,17 @@ pub fn process_instruction(
             slow_path_without_pda_signer(accounts, sequence, aux_data)
         }
         0x04 => {
-            if instruction_data.len() < 10 {
+            if instruction_data.len() < 18 {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            let payload_len = instruction_data[9] as usize;
-            if instruction_data.len() < 10 + payload_len {
+            let oracle_meta = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let sequence = u64::from_le_bytes(instruction_data[9..17].try_into().unwrap());
+            let payload_len = instruction_data[17] as usize;
+            if instruction_data.len() < 18 + payload_len {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let payload = &instruction_data[10..10 + payload_len];
-            stale_sequence(accounts, sequence, payload)
+            let payload = &instruction_data[18..18 + payload_len];
+            stale_sequence(accounts, oracle_meta, sequence, payload)
         }
         0x05 => Ok(()), // Echo
         _ => Err(ProgramError::InvalidInstructionData),
@@ -105,17 +108,19 @@ pub fn process_instruction(
 /// ATTACK: CPI to fast path with authority marked as NOT signer.
 fn fast_path_without_authority_signer(
     accounts: &[AccountView],
+    oracle_meta: u64,
     sequence: u64,
     payload: &[u8],
 ) -> ProgramResult {
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut ix_data = [0u8; 8 + 255];
-    ix_data[..8].copy_from_slice(&sequence.to_le_bytes());
-    let payload_len = payload.len().min(255);
-    ix_data[8..8 + payload_len].copy_from_slice(&payload[..payload_len]);
-    let ix_data = &ix_data[..8 + payload_len];
+    let mut ix_data = [0u8; 8 + 8 + 239];
+    ix_data[..8].copy_from_slice(&oracle_meta.to_le_bytes());
+    ix_data[8..16].copy_from_slice(&sequence.to_le_bytes());
+    let payload_len = payload.len().min(239);
+    ix_data[16..16 + payload_len].copy_from_slice(&payload[..payload_len]);
+    let ix_data = &ix_data[..16 + payload_len];
 
     // Attack: mark authority as readonly (NOT signer)
     let cpi_accounts = [
@@ -133,17 +138,19 @@ fn fast_path_without_authority_signer(
 /// ATTACK: Fast path CPI with wrong authority (accounts[0] != envelope.authority).
 fn fast_path_with_wrong_authority(
     accounts: &[AccountView],
+    oracle_meta: u64,
     sequence: u64,
     payload: &[u8],
 ) -> ProgramResult {
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut ix_data = [0u8; 8 + 255];
-    ix_data[..8].copy_from_slice(&sequence.to_le_bytes());
-    let payload_len = payload.len().min(255);
-    ix_data[8..8 + payload_len].copy_from_slice(&payload[..payload_len]);
-    let ix_data = &ix_data[..8 + payload_len];
+    let mut ix_data = [0u8; 8 + 8 + 239];
+    ix_data[..8].copy_from_slice(&oracle_meta.to_le_bytes());
+    ix_data[8..16].copy_from_slice(&sequence.to_le_bytes());
+    let payload_len = payload.len().min(239);
+    ix_data[16..16 + payload_len].copy_from_slice(&payload[..payload_len]);
+    let ix_data = &ix_data[..16 + payload_len];
 
     // Pass accounts[0] (wrong authority) as signer - it IS a signer but doesn't
     // match envelope.authority, so c_u_soon rejects with IncorrectAuthority
@@ -215,15 +222,21 @@ fn slow_path_without_pda_signer(
 }
 
 /// ATTACK: Fast path CPI with stale sequence (sequence <= envelope.oracle_state.sequence).
-fn stale_sequence(accounts: &[AccountView], sequence: u64, payload: &[u8]) -> ProgramResult {
+fn stale_sequence(
+    accounts: &[AccountView],
+    oracle_meta: u64,
+    sequence: u64,
+    payload: &[u8],
+) -> ProgramResult {
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut ix_data = [0u8; 8 + 255];
-    ix_data[..8].copy_from_slice(&sequence.to_le_bytes());
-    let payload_len = payload.len().min(255);
-    ix_data[8..8 + payload_len].copy_from_slice(&payload[..payload_len]);
-    let ix_data = &ix_data[..8 + payload_len];
+    let mut ix_data = [0u8; 8 + 8 + 239];
+    ix_data[..8].copy_from_slice(&oracle_meta.to_le_bytes());
+    ix_data[8..16].copy_from_slice(&sequence.to_le_bytes());
+    let payload_len = payload.len().min(239);
+    ix_data[16..16 + payload_len].copy_from_slice(&payload[..payload_len]);
+    let ix_data = &ix_data[..16 + payload_len];
 
     let cpi_accounts = [
         InstructionAccount::readonly_signer(accounts[0].address()), // authority, signer

@@ -1,14 +1,10 @@
 [package]
-name = "c_u_soon"
+name = "c_u_soon_client"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 
-[features]
-derive = ["dep:c_u_soon_derive"]
-
 [dependencies]
+c_u_soon = { path = "../sdk" }
 bytemuck = { workspace = true }
-solana-address = { workspace = true }
 wincode = { workspace = true }
-c_u_soon_derive = { path = "../c_u_soon_derive", optional = true }

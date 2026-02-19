@@ -1,7 +1,7 @@
 extern crate alloc;
 use crate::pda::create_program_address;
 use alloc::vec::Vec;
-use c_u_soon::{Bitmask, Envelope, ENVELOPE_SEED};
+use c_u_soon::{Bitmask, Envelope, StructMetadata, ENVELOPE_SEED};
 use pinocchio::{
     cpi::{Seed, Signer},
     error::ProgramError,
@@ -15,6 +15,7 @@ pub fn process(
     accounts: &[AccountView],
     custom_seeds: Vec<Vec<u8>>,
     bump: u8,
+    oracle_metadata: u64,
 ) -> ProgramResult {
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -94,9 +95,8 @@ pub fn process(
     envelope.bump = bump;
     envelope.program_bitmask = Bitmask::ZERO;
     envelope.user_bitmask = Bitmask::ZERO;
-    // Metadata is already zeroed by Zeroable/initialization, but explicit for clarity
-    envelope.auxiliary_metadata.struct_len = 0;
-    envelope.oracle_metadata.struct_len = 0;
+    envelope.auxiliary_metadata = StructMetadata::ZERO;
+    envelope.oracle_state.oracle_metadata = StructMetadata(oracle_metadata);
 
     Ok(())
 }

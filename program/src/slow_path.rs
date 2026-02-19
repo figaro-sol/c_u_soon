@@ -22,8 +22,12 @@ fn process_instruction(
     }
 
     match ix {
-        SlowPathInstruction::Create { custom_seeds, bump } => {
-            instructions::create::process(program_id, accounts, custom_seeds, bump)
+        SlowPathInstruction::Create {
+            custom_seeds,
+            bump,
+            oracle_metadata,
+        } => {
+            instructions::create::process(program_id, accounts, custom_seeds, bump, oracle_metadata)
         }
         SlowPathInstruction::Close => instructions::close::process(program_id, accounts),
         SlowPathInstruction::SetDelegatedProgram {

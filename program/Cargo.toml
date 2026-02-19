@@ -14,7 +14,9 @@ wincode = { workspace = true }
 pinocchio = { workspace = true, features = ["cpi"] }
 pinocchio-system = "0.5"
 
+
 [dev-dependencies]
+c_u_soon_client = { path = "../client" }
 litesvm = "0.9.1"
 log = "0.4"
 mollusk-svm = "0.10"

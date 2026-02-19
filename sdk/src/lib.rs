@@ -9,30 +9,97 @@ use wincode::{SchemaRead, SchemaWrite};
 pub const ORACLE_ACCOUNT_SIZE: usize = core::mem::size_of::<OracleState>();
 
 // Fast path reads instruction_data_len as u8 (max 255 = u8::MAX).
-// A full payload is [sequence: u64][data: ORACLE_BYTES] = 8 + 247 = 255 bytes,
-// so data_size = 255, copying exactly the sequence + data fields of OracleState.
-// OracleState is 256 bytes total (8 + 247 + 1 explicit pad for Pod alignment).
-pub const ORACLE_BYTES: usize = 247;
+// A full payload is [oracle_meta: u64][sequence: u64][data: ORACLE_BYTES] = 8 + 8 + 239 = 255 bytes,
+// so data_size = 255, copying exactly the oracle_metadata + sequence + data fields of OracleState.
+// OracleState is 256 bytes total (8 + 8 + 239 + 1 explicit pad for Pod alignment).
+pub const ORACLE_BYTES: usize = 239;
 
 pub const AUX_DATA_SIZE: usize = 256;
 pub const BITMASK_SIZE: usize = 128;
 
-/// Metadata about a struct's content (struct_len, struct_hash when macro is ready).
+/// Packed oracle struct identity: bits[63:56] = type_size (u8), bits[55:0] = 56-bit hash.
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq, Eq)]
-#[repr(C)]
-pub struct StructMetadata {
-    pub struct_len: u64,
+#[repr(transparent)]
+pub struct StructMetadata(pub u64);
+
+impl StructMetadata {
+    pub const ZERO: Self = Self(0);
+
+    pub const fn new(type_size: u8, hash_56: u64) -> Self {
+        Self(((type_size as u64) << 56) | (hash_56 & 0x00FF_FFFF_FFFF_FFFF))
+    }
+
+    pub fn type_size(&self) -> u8 {
+        (self.0 >> 56) as u8
+    }
+
+    pub fn hash_56(&self) -> u64 {
+        self.0 & 0x00FF_FFFF_FFFF_FFFF
+    }
+
+    pub fn of<T: TypeHash>() -> Self {
+        T::METADATA
+    }
 }
 
 const _: () = assert!(
     core::mem::size_of::<OracleState>() == 256,
-    "OracleState must be 256 bytes (8 seq + 247 data + 1 pad)"
+    "OracleState must be 256 bytes (8 meta + 8 seq + 239 data + 1 pad)"
 );
 
 const _: () = assert!(
-    core::mem::size_of::<Envelope>() == 872,
-    "Envelope must be 872 bytes"
+    core::mem::size_of::<Envelope>() == 864,
+    "Envelope must be 864 bytes"
 );
+
+// --- TypeHash: const-evaluable type identity for envelope data ---
+
+pub const fn const_fnv1a(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    let mut hash = FNV_OFFSET;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+        i += 1;
+    }
+    hash
+}
+
+pub const fn combine_hash(accumulated: u64, field_hash: u64) -> u64 {
+    let rotated = accumulated.rotate_left(7) ^ field_hash;
+    rotated.wrapping_mul(0x517cc1b727220a95)
+}
+
+pub trait TypeHash: Pod + Zeroable {
+    const TYPE_HASH: u64;
+    const METADATA: StructMetadata;
+}
+
+macro_rules! impl_type_hash_primitive {
+    ($($ty:ty),*) => {$(
+        impl TypeHash for $ty {
+            const TYPE_HASH: u64 = const_fnv1a(stringify!($ty).as_bytes());
+            const METADATA: StructMetadata = StructMetadata::new(
+                core::mem::size_of::<$ty>() as u8,
+                Self::TYPE_HASH,
+            );
+        }
+    )*};
+}
+
+impl_type_hash_primitive!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64);
+
+impl<T: TypeHash, const N: usize> TypeHash for [T; N] {
+    const TYPE_HASH: u64 =
+        combine_hash(combine_hash(const_fnv1a(b"array"), T::TYPE_HASH), N as u64);
+    const METADATA: StructMetadata =
+        StructMetadata::new((core::mem::size_of::<T>() * N) as u8, Self::TYPE_HASH);
+}
+
+#[cfg(feature = "derive")]
+pub use c_u_soon_derive::TypeHash;
 
 pub const ENVELOPE_SEED: &[u8] = b"envelope";
 pub const MAX_CUSTOM_SEEDS: usize = 13;
@@ -40,9 +107,10 @@ pub const MAX_CUSTOM_SEEDS: usize = 13;
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct OracleState {
+    pub oracle_metadata: StructMetadata, // 8   (Envelope[32..40])
     pub sequence: u64,
     pub data: [u8; ORACLE_BYTES],
-    pub _pad: [u8; 1],
+    pub _paddingdata: [u8; 1],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -58,8 +126,7 @@ pub struct Envelope {
     pub authority_aux_sequence: u64,         // 8   [584..592]
     pub program_aux_sequence: u64,           // 8   [592..600]
     pub auxiliary_metadata: StructMetadata,  // 8   [600..608]
-    pub oracle_metadata: StructMetadata,     // 8   [608..616]
-    pub auxiliary_data: [u8; AUX_DATA_SIZE], // 256 [616..872]
+    pub auxiliary_data: [u8; AUX_DATA_SIZE], // 256 [608..864]
 }
 
 impl Envelope {
@@ -68,6 +135,50 @@ impl Envelope {
     #[inline]
     pub fn has_delegation(&self) -> bool {
         self.delegation_authority != Address::zeroed()
+    }
+
+    pub fn oracle<T: TypeHash>(&self) -> Option<&T> {
+        let size = core::mem::size_of::<T>();
+        if size > ORACLE_BYTES {
+            return None;
+        }
+        if self.oracle_state.oracle_metadata != T::METADATA {
+            return None;
+        }
+        bytemuck::try_from_bytes(&self.oracle_state.data[..size]).ok()
+    }
+
+    pub fn oracle_mut<T: TypeHash>(&mut self) -> Option<&mut T> {
+        let size = core::mem::size_of::<T>();
+        if size > ORACLE_BYTES {
+            return None;
+        }
+        if self.oracle_state.oracle_metadata != T::METADATA {
+            return None;
+        }
+        bytemuck::try_from_bytes_mut(&mut self.oracle_state.data[..size]).ok()
+    }
+
+    pub fn aux<T: TypeHash>(&self) -> Option<&T> {
+        let size = core::mem::size_of::<T>();
+        if size > AUX_DATA_SIZE {
+            return None;
+        }
+        if self.auxiliary_metadata != T::METADATA {
+            return None;
+        }
+        bytemuck::try_from_bytes(&self.auxiliary_data[..size]).ok()
+    }
+
+    pub fn aux_mut<T: TypeHash>(&mut self) -> Option<&mut T> {
+        let size = core::mem::size_of::<T>();
+        if size > AUX_DATA_SIZE {
+            return None;
+        }
+        if self.auxiliary_metadata != T::METADATA {
+            return None;
+        }
+        bytemuck::try_from_bytes_mut(&mut self.auxiliary_data[..size]).ok()
     }
 }
 
@@ -202,6 +313,7 @@ pub enum SlowPathInstruction {
     Create {
         custom_seeds: Vec<Vec<u8>>,
         bump: u8,
+        oracle_metadata: u64,
     },
     Close,
     SetDelegatedProgram {
@@ -332,6 +444,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_type_hash_primitives_all_distinct() {
+        let hashes = [
+            u8::TYPE_HASH,
+            u16::TYPE_HASH,
+            u32::TYPE_HASH,
+            u64::TYPE_HASH,
+            u128::TYPE_HASH,
+            i8::TYPE_HASH,
+            i16::TYPE_HASH,
+            i32::TYPE_HASH,
+            i64::TYPE_HASH,
+            i128::TYPE_HASH,
+            f32::TYPE_HASH,
+            f64::TYPE_HASH,
+        ];
+        for i in 0..hashes.len() {
+            for j in (i + 1)..hashes.len() {
+                assert_ne!(hashes[i], hashes[j], "hash collision at ({}, {})", i, j);
+            }
+        }
+    }
+
+    #[test]
+    fn test_combine_hash_order_sensitive() {
+        let a = const_fnv1a(b"alpha");
+        let b = const_fnv1a(b"beta");
+        assert_ne!(combine_hash(a, b), combine_hash(b, a));
+    }
+
+    #[test]
+    fn test_array_hashes_distinct_by_element_type() {
+        assert_ne!(<[u8; 4]>::TYPE_HASH, <[u32; 1]>::TYPE_HASH);
+        assert_ne!(<[u8; 2]>::TYPE_HASH, <[u16; 1]>::TYPE_HASH);
+    }
+
+    #[test]
+    fn test_array_hashes_distinct_by_length() {
+        assert_ne!(<[u8; 4]>::TYPE_HASH, <[u8; 8]>::TYPE_HASH);
+        assert_ne!(<[u32; 2]>::TYPE_HASH, <[u32; 3]>::TYPE_HASH);
+    }
+
+    #[test]
+    fn test_metadata_type_size_matches() {
+        assert_eq!(u8::METADATA.type_size(), 1);
+        assert_eq!(u16::METADATA.type_size(), 2);
+        assert_eq!(u32::METADATA.type_size(), 4);
+        assert_eq!(u64::METADATA.type_size(), 8);
+        assert_eq!(u128::METADATA.type_size(), 16);
+        assert_eq!(<[u8; 10]>::METADATA.type_size(), 10);
+        assert_eq!(<[u32; 4]>::METADATA.type_size(), 16);
+    }
+
+    #[test]
+    fn test_struct_metadata_of() {
+        assert_eq!(StructMetadata::of::<u32>(), u32::METADATA);
+        assert_eq!(StructMetadata::of::<[u8; 4]>(), <[u8; 4]>::METADATA);
+    }
+
+    #[test]
     fn test_parse_seeds_empty() {
         assert!(parse_seeds(&[]).is_none());
     }
@@ -455,7 +626,7 @@ mod tests {
 
     #[test]
     fn test_envelope_size() {
-        assert_eq!(core::mem::size_of::<Envelope>(), 872);
+        assert_eq!(core::mem::size_of::<Envelope>(), 864);
     }
 
     #[test]
@@ -500,12 +671,18 @@ mod tests {
         let ix = SlowPathInstruction::Create {
             custom_seeds: alloc::vec![alloc::vec![1, 2, 3], alloc::vec![4, 5]],
             bump: 42,
+            oracle_metadata: 0xDEAD_BEEF_1234_5678,
         };
         let serialized = wincode::serialize(&ix).unwrap();
         let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
         match deserialized {
-            SlowPathInstruction::Create { custom_seeds, bump } => {
+            SlowPathInstruction::Create {
+                custom_seeds,
+                bump,
+                oracle_metadata,
+            } => {
                 assert_eq!(bump, 42);
+                assert_eq!(oracle_metadata, 0xDEAD_BEEF_1234_5678);
                 assert_eq!(custom_seeds.len(), 2);
                 assert_eq!(custom_seeds[0], alloc::vec![1, 2, 3]);
                 assert_eq!(custom_seeds[1], alloc::vec![4, 5]);
@@ -527,5 +704,51 @@ mod tests {
             }
             _ => panic!("Wrong variant"),
         }
+    }
+
+    #[test]
+    fn test_envelope_oracle_typed_roundtrip() {
+        let mut env = Envelope::zeroed();
+        env.oracle_state.oracle_metadata = u32::METADATA;
+        let val: &u32 = env.oracle::<u32>().unwrap();
+        assert_eq!(*val, 0);
+
+        *env.oracle_mut::<u32>().unwrap() = 0xDEAD_BEEF;
+        assert_eq!(*env.oracle::<u32>().unwrap(), 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn test_envelope_oracle_wrong_metadata() {
+        let mut env = Envelope::zeroed();
+        env.oracle_state.oracle_metadata = u32::METADATA;
+        assert!(env.oracle::<u64>().is_none());
+    }
+
+    #[test]
+    fn test_envelope_aux_typed_roundtrip() {
+        let mut env = Envelope::zeroed();
+        env.auxiliary_metadata = <[u8; 16]>::METADATA;
+        let val: &[u8; 16] = env.aux::<[u8; 16]>().unwrap();
+        assert_eq!(*val, [0u8; 16]);
+
+        let slot = env.aux_mut::<[u8; 16]>().unwrap();
+        slot[0] = 0xAA;
+        slot[15] = 0xBB;
+        let val = env.aux::<[u8; 16]>().unwrap();
+        assert_eq!(val[0], 0xAA);
+        assert_eq!(val[15], 0xBB);
+    }
+
+    #[test]
+    fn test_envelope_aux_wrong_metadata() {
+        let mut env = Envelope::zeroed();
+        env.auxiliary_metadata = u32::METADATA;
+        assert!(env.aux::<u64>().is_none());
+    }
+
+    #[test]
+    fn test_envelope_aux_zero_metadata_rejects() {
+        let env = Envelope::zeroed();
+        assert!(env.aux::<u32>().is_none());
     }
 }

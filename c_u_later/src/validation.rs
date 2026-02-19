@@ -102,9 +102,7 @@ pub fn constant_mask<T: CuLaterMask>() -> Bitmask {
 #[inline]
 pub fn verify_constants_unchanged<T: CuLaterMask>(old: &[u8], new: &[u8]) -> bool {
     let const_mask = constant_mask::<T>();
-    (0..old.len().min(new.len()).min(AUX_SIZE)).all(|i| {
-        !const_mask.get_bit(i) || old[i] == new[i]
-    })
+    (0..old.len().min(new.len()).min(AUX_SIZE)).all(|i| !const_mask.get_bit(i) || old[i] == new[i])
 }
 
 #[cfg(test)]

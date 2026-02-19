@@ -9,4 +9,8 @@ derive = ["dep:c_u_later_derive"]
 
 [dependencies]
 c_u_later_derive = { path = "derive", optional = true }
+c_u_soon = { path = "../sdk" }
 bytemuck = { workspace = true }
+
+[dev-dependencies]
+c_u_soon = { path = "../sdk", features = ["derive"] }

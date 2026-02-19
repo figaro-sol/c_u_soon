@@ -1,10 +1,13 @@
 mod common;
 
 use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
-use common::{
-    create_delegated_envelope, create_existing_envelope, create_funded_account,
+use c_u_soon_client::{
     set_delegated_program_instruction_data, update_auxiliary_force_instruction_data,
-    update_auxiliary_instruction_data, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
+    update_auxiliary_instruction_data,
+};
+use common::{
+    create_delegated_envelope, create_existing_envelope, create_funded_account, LOG_LOCK,
+    PROGRAM_ID, PROGRAM_PATH,
 };
 use mollusk_svm::result::Check;
 use mollusk_svm::Mollusk;
@@ -13,19 +16,19 @@ use solana_sdk::instruction::{AccountMeta, Instruction};
 
 // Program IDs for CPI test programs (arbitrary but stable)
 const BYTE_WRITER_ID: Address = Address::new_from_array([
-    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
-    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
-    0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
 ]);
 
 const ATTACKER_PROBE_ID: Address = Address::new_from_array([
-    0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
-    0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
-    0xBB, 0xBB,
+    0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+    0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
 ]);
 
-const C_U_SOON_SO_PATH: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../target/deploy/c_u_soon_program.so");
+const C_U_SOON_SO_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../target/deploy/c_u_soon_program.so"
+);
 
 const BYTE_WRITER_SO_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -194,27 +197,38 @@ mod litesvm_tests {
         transaction::Transaction,
     };
 
-    fn byte_writer_fast_path_ix_data(sequence: u64, payload: &[u8]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(1 + 8 + 1 + payload.len());
+    fn byte_writer_fast_path_ix_data(oracle_meta: u64, sequence: u64, payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 8 + 1 + payload.len());
         v.push(0x00); // UpdateViaFastPath
+        v.extend_from_slice(&oracle_meta.to_le_bytes());
         v.extend_from_slice(&sequence.to_le_bytes());
         v.push(payload.len() as u8);
         v.extend_from_slice(payload);
         v
     }
 
-    fn attacker_fast_path_without_signer(sequence: u64, payload: &[u8]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(1 + 8 + 1 + payload.len());
+    fn attacker_fast_path_without_signer(
+        oracle_meta: u64,
+        sequence: u64,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 8 + 1 + payload.len());
         v.push(0x00); // FastPathWithoutAuthoritySigner
+        v.extend_from_slice(&oracle_meta.to_le_bytes());
         v.extend_from_slice(&sequence.to_le_bytes());
         v.push(payload.len() as u8);
         v.extend_from_slice(payload);
         v
     }
 
-    fn attacker_fast_path_wrong_authority(sequence: u64, payload: &[u8]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(1 + 8 + 1 + payload.len());
+    fn attacker_fast_path_wrong_authority(
+        oracle_meta: u64,
+        sequence: u64,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 8 + 1 + payload.len());
         v.push(0x01); // FastPathWithWrongAuthority
+        v.extend_from_slice(&oracle_meta.to_le_bytes());
         v.extend_from_slice(&sequence.to_le_bytes());
         v.push(payload.len() as u8);
         v.extend_from_slice(payload);
@@ -234,9 +248,10 @@ mod litesvm_tests {
         let envelope = Envelope {
             authority: *authority,
             oracle_state: OracleState {
+                oracle_metadata: StructMetadata::ZERO,
                 sequence: seq,
                 data: [0u8; ORACLE_BYTES],
-                _pad: [0u8; 1],
+                _paddingdata: [0u8; 1],
             },
             bump: 0,
             _padding: [0u8; 7],
@@ -245,8 +260,7 @@ mod litesvm_tests {
             user_bitmask: Bitmask::ZERO,
             authority_aux_sequence: 0,
             program_aux_sequence: 0,
-            auxiliary_metadata: StructMetadata { struct_len: 0 },
-            oracle_metadata: StructMetadata { struct_len: 0 },
+            auxiliary_metadata: StructMetadata::ZERO,
             auxiliary_data: [0u8; AUX_DATA_SIZE],
         };
         solana_sdk::account::Account {
@@ -280,7 +294,7 @@ mod litesvm_tests {
         svm.set_account(envelope_addr, make_envelope(&authority_addr, 0))
             .unwrap();
 
-        let ix_data = byte_writer_fast_path_ix_data(1, &[0xAB]);
+        let ix_data = byte_writer_fast_path_ix_data(0, 1, &[0xAB]);
         let instruction = Instruction::new_with_bytes(
             BYTE_WRITER_ID,
             &ix_data,
@@ -323,7 +337,7 @@ mod litesvm_tests {
             .unwrap();
 
         // Attack: attacker_probe will mark authority as NOT signer in CPI metadata
-        let ix_data = attacker_fast_path_without_signer(1, &[0xAB]);
+        let ix_data = attacker_fast_path_without_signer(0, 1, &[0xAB]);
         let instruction = Instruction::new_with_bytes(
             ATTACKER_PROBE_ID,
             &ix_data,
@@ -343,7 +357,10 @@ mod litesvm_tests {
 
         // c_u_soon sees authority.is_signer() = false → MissingRequiredSignature
         let result = svm.send_transaction(tx);
-        assert!(result.is_err(), "Attack without authority signer should be rejected");
+        assert!(
+            result.is_err(),
+            "Attack without authority signer should be rejected"
+        );
     }
 
     /// Attack: CPI with wrong authority (not the envelope's authority) → c_u_soon rejects
@@ -367,7 +384,7 @@ mod litesvm_tests {
         .unwrap();
 
         // Attack: pass wrong_authority as signer — it IS a signer but != envelope.authority
-        let ix_data = attacker_fast_path_wrong_authority(1, &[0xAB]);
+        let ix_data = attacker_fast_path_wrong_authority(0, 1, &[0xAB]);
         let instruction = Instruction::new_with_bytes(
             ATTACKER_PROBE_ID,
             &ix_data,
@@ -387,7 +404,10 @@ mod litesvm_tests {
 
         // c_u_soon sees wrong authority → IncorrectAuthority
         let result = svm.send_transaction(tx);
-        assert!(result.is_err(), "Attack with wrong authority should be rejected");
+        assert!(
+            result.is_err(),
+            "Attack with wrong authority should be rejected"
+        );
     }
 
     /// Attack: UpdateAuxiliary without PDA signer when no delegation → c_u_soon rejects
@@ -414,10 +434,10 @@ mod litesvm_tests {
             ATTACKER_PROBE_ID,
             &ix_data,
             vec![
-                AccountMeta::new_readonly(authority_addr, true),      // [0] authority, signer
-                AccountMeta::new(envelope_addr, false),               // [1] envelope, writable
-                AccountMeta::new_readonly(fake_pda.pubkey(), false),  // [2] pda, NOT signer
-                AccountMeta::new_readonly(PROGRAM_ID, false),         // [3] c_u_soon
+                AccountMeta::new_readonly(authority_addr, true), // [0] authority, signer
+                AccountMeta::new(envelope_addr, false),          // [1] envelope, writable
+                AccountMeta::new_readonly(fake_pda.pubkey(), false), // [2] pda, NOT signer
+                AccountMeta::new_readonly(PROGRAM_ID, false),    // [3] c_u_soon
             ],
         );
 
@@ -430,6 +450,9 @@ mod litesvm_tests {
 
         // c_u_soon sees pda_account.is_signer() = false → MissingRequiredSignature
         let result = svm.send_transaction(tx);
-        assert!(result.is_err(), "Attack without PDA signer should be rejected");
+        assert!(
+            result.is_err(),
+            "Attack without PDA signer should be rejected"
+        );
     }
 }

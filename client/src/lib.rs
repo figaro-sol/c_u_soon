@@ -1,0 +1,105 @@
+use c_u_soon::{SlowPathInstruction, TypeHash, AUX_DATA_SIZE, BITMASK_SIZE};
+
+/// Fast path instruction data: [oracle_meta: u64 LE][sequence: u64 LE][payload bytes]
+pub fn fast_path_instruction_data(oracle_meta: u64, sequence: u64, payload: &[u8]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(8 + 8 + payload.len());
+    data.extend_from_slice(&oracle_meta.to_le_bytes());
+    data.extend_from_slice(&sequence.to_le_bytes());
+    data.extend_from_slice(payload);
+    data
+}
+
+pub fn create_instruction_data(custom_seeds: &[&[u8]], bump: u8, oracle_metadata: u64) -> Vec<u8> {
+    let seeds_vecs: Vec<Vec<u8>> = custom_seeds.iter().map(|s| s.to_vec()).collect();
+    let ix = SlowPathInstruction::Create {
+        custom_seeds: seeds_vecs,
+        bump,
+        oracle_metadata,
+    };
+    wincode::serialize(&ix).unwrap()
+}
+
+pub fn close_instruction_data() -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::Close).unwrap()
+}
+
+pub fn set_delegated_program_instruction_data(
+    program_bitmask: [u8; BITMASK_SIZE],
+    user_bitmask: [u8; BITMASK_SIZE],
+) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::SetDelegatedProgram {
+        program_bitmask,
+        user_bitmask,
+    })
+    .unwrap()
+}
+
+pub fn clear_delegation_instruction_data() -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::ClearDelegation).unwrap()
+}
+
+pub fn update_auxiliary_instruction_data(sequence: u64, data: [u8; AUX_DATA_SIZE]) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::UpdateAuxiliary { sequence, data }).unwrap()
+}
+
+pub fn update_auxiliary_force_instruction_data(
+    authority_sequence: u64,
+    program_sequence: u64,
+    data: [u8; AUX_DATA_SIZE],
+) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryForce {
+        authority_sequence,
+        program_sequence,
+        data,
+    })
+    .unwrap()
+}
+
+pub fn update_auxiliary_delegated_instruction_data(
+    sequence: u64,
+    data: [u8; AUX_DATA_SIZE],
+) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data }).unwrap()
+}
+
+pub fn create_envelope_typed<T: TypeHash>(custom_seeds: &[&[u8]], bump: u8) -> Vec<u8> {
+    create_instruction_data(custom_seeds, bump, T::METADATA.0)
+}
+
+pub fn fast_path_update_typed<T: TypeHash>(sequence: u64, value: &T) -> Vec<u8> {
+    fast_path_instruction_data(T::METADATA.0, sequence, bytemuck::bytes_of(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_create_matches_untyped() {
+        let seeds: &[&[u8]] = &[b"test"];
+        let typed = create_envelope_typed::<u32>(seeds, 42);
+        let untyped = create_instruction_data(seeds, 42, u32::METADATA.0);
+        assert_eq!(typed, untyped);
+    }
+
+    #[test]
+    fn typed_fast_path_matches_untyped() {
+        let value: u32 = 0xDEAD_BEEF;
+        let typed = fast_path_update_typed::<u32>(7, &value);
+        let untyped = fast_path_instruction_data(u32::METADATA.0, 7, bytemuck::bytes_of(&value));
+        assert_eq!(typed, untyped);
+    }
+
+    #[test]
+    fn typed_fast_path_roundtrip() {
+        let value: u64 = 0x1234_5678_9ABC_DEF0;
+        let data = fast_path_update_typed::<u64>(99, &value);
+        assert_eq!(data.len(), 8 + 8 + 8);
+        let meta = u64::from_le_bytes(data[0..8].try_into().unwrap());
+        let seq = u64::from_le_bytes(data[8..16].try_into().unwrap());
+        let payload: u64 = *bytemuck::from_bytes(&data[16..24]);
+        assert_eq!(meta, u64::METADATA.0);
+        assert_eq!(seq, 99);
+        assert_eq!(payload, value);
+    }
+}

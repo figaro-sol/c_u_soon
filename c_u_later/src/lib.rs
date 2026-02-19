@@ -76,9 +76,9 @@ pub trait CuLaterMask {
     fn authority_mask() -> [bool; AUX_SIZE];
 }
 
-pub trait CuLater: CuLaterMask + Pod + Zeroable {}
+pub trait CuLater: CuLaterMask + c_u_soon::TypeHash + Pod + Zeroable {}
 
-impl<T: CuLaterMask + Pod + Zeroable> CuLater for T {}
+impl<T: CuLaterMask + c_u_soon::TypeHash + Pod + Zeroable> CuLater for T {}
 
 #[doc(hidden)]
 pub fn compose_mask_at_offset(
@@ -156,6 +156,38 @@ impl<T: CuLaterMask, const N: usize> CuLaterMask for [T; N] {
         }
         mask
     }
+}
+
+/// Convert a CuLaterMask program mask to c_u_soon on-chain Bitmask format.
+/// Polarity: true (writable) → 0x00, false (blocked) → 0xFF.
+/// Panics if any bit ≥128 is set (on-chain bitmask only covers first 128 bytes of aux_data).
+pub fn to_program_wire_mask<T: CuLaterMask>() -> c_u_soon::Bitmask {
+    bools_to_wire_mask(&T::program_mask())
+}
+
+/// Convert a CuLaterMask authority mask to c_u_soon on-chain Bitmask format.
+/// Polarity: true (writable) → 0x00, false (blocked) → 0xFF.
+/// Panics if any bit ≥128 is set (on-chain bitmask only covers first 128 bytes of aux_data).
+pub fn to_authority_wire_mask<T: CuLaterMask>() -> c_u_soon::Bitmask {
+    bools_to_wire_mask(&T::authority_mask())
+}
+
+fn bools_to_wire_mask(mask: &[bool; AUX_SIZE]) -> c_u_soon::Bitmask {
+    for i in c_u_soon::BITMASK_SIZE..AUX_SIZE {
+        assert!(
+            !mask[i],
+            "bit {} is set but on-chain bitmask only covers first {} bytes",
+            i,
+            c_u_soon::BITMASK_SIZE,
+        );
+    }
+    let mut wire = [0xFFu8; c_u_soon::BITMASK_SIZE];
+    for i in 0..c_u_soon::BITMASK_SIZE {
+        if mask[i] {
+            wire[i] = 0x00;
+        }
+    }
+    c_u_soon::Bitmask::from(wire)
 }
 
 pub struct IsCuLaterWrapper<T> {

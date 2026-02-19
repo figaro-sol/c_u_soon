@@ -610,6 +610,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "c_u_later_derive",
+ "c_u_soon",
 ]
 
 [[package]]
@@ -626,8 +627,27 @@ name = "c_u_soon"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "c_u_soon_derive",
  "solana-address 2.2.0",
  "wincode 0.2.5",
+]
+
+[[package]]
+name = "c_u_soon_client"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "c_u_soon",
+ "wincode 0.2.5",
+]
+
+[[package]]
+name = "c_u_soon_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.115",
 ]
 
 [[package]]
@@ -636,6 +656,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "c_u_soon",
+ "c_u_soon_client",
  "litesvm",
  "log",
  "mollusk-svm",

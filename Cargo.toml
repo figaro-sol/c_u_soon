@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["sdk", "program", "c_u_later", "c_u_later/derive"]
+members = ["sdk", "program", "client", "c_u_later", "c_u_later/derive", "c_u_soon_derive"]
 
 [workspace.package]
 version = "0.1.0"

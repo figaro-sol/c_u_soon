@@ -2,15 +2,18 @@ mod common;
 
 use bytemuck::Zeroable;
 use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
-use common::{
-    clear_delegation_instruction_data, create_delegated_envelope, create_existing_envelope,
-    create_funded_account, set_delegated_program_instruction_data,
+use c_u_soon_client::{
+    clear_delegation_instruction_data, set_delegated_program_instruction_data,
     update_auxiliary_delegated_instruction_data, update_auxiliary_force_instruction_data,
-    update_auxiliary_instruction_data, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
+    update_auxiliary_instruction_data,
+};
+use common::{
+    create_delegated_envelope, create_existing_envelope, create_funded_account, LOG_LOCK,
+    PROGRAM_ID, PROGRAM_PATH,
 };
 use mollusk_svm::result::Check;
 use mollusk_svm::Mollusk;
-use pinocchio::{Address, error::ProgramError};
+use pinocchio::{error::ProgramError, Address};
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
 // -- Delegation Security Tests --
@@ -70,7 +73,12 @@ fn test_set_delegated_program_rejects_if_delegation_exists() {
     let envelope_pubkey = Address::new_unique();
 
     let existing_bitmask = Bitmask::from([0x00u8; 128]);
-    let envelope = create_delegated_envelope(&authority, &existing_delegation, existing_bitmask, existing_bitmask);
+    let envelope = create_delegated_envelope(
+        &authority,
+        &existing_delegation,
+        existing_bitmask,
+        existing_bitmask,
+    );
 
     let mut new_program_bitmask = [0xFFu8; 128];
     new_program_bitmask[0] = 0x00;
@@ -137,7 +145,7 @@ fn test_clear_delegation_happy_path() {
     assert_eq!(env.program_bitmask, Bitmask::ZERO);
     assert_eq!(env.user_bitmask, Bitmask::ZERO);
     // Verify oracle_state.data and auxiliary_data are zeroed
-    assert_eq!(env.oracle_state.data, [0u8; 247]);
+    assert_eq!(env.oracle_state.data, [0u8; c_u_soon::ORACLE_BYTES]);
     assert_eq!(env.auxiliary_data, [0u8; AUX_DATA_SIZE]);
 }
 
@@ -156,7 +164,12 @@ fn test_update_auxiliary_with_delegation_applies_bitmask() {
     user_bitmask[0] = 0x00;
     let program_bitmask = Bitmask::from([0xFFu8; 128]);
 
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, program_bitmask, Bitmask::from(user_bitmask));
+    let envelope = create_delegated_envelope(
+        &authority,
+        &delegation_authority,
+        program_bitmask,
+        Bitmask::from(user_bitmask),
+    );
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xAA;
@@ -198,7 +211,12 @@ fn test_update_auxiliary_delegated_happy_path() {
     let program_bitmask = Bitmask::from([0x00u8; 128]);
     let user_bitmask = Bitmask::from([0xFFu8; 128]);
 
-    let envelope = create_delegated_envelope(&authority, &delegation_authority, program_bitmask, user_bitmask);
+    let envelope = create_delegated_envelope(
+        &authority,
+        &delegation_authority,
+        program_bitmask,
+        user_bitmask,
+    );
 
     let mut aux_data = [0u8; AUX_DATA_SIZE];
     aux_data[0] = 0xCC;

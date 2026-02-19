@@ -2,7 +2,7 @@
 
 use bytemuck::{bytes_of, Zeroable};
 use c_u_soon::{
-    Bitmask, Envelope, OracleState, SlowPathInstruction, StructMetadata, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
+    Bitmask, Envelope, OracleState, StructMetadata, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
 };
 use pinocchio::Address;
 use solana_sdk::account::Account;
@@ -26,16 +26,6 @@ pub fn find_envelope_pda(authority: &Address, custom_seeds: &[&[u8]]) -> (Addres
     Address::find_program_address(&seeds, &PROGRAM_ID)
 }
 
-/// Build create instruction data using wincode serialization
-pub fn create_instruction_data(custom_seeds: &[&[u8]], bump: u8) -> Vec<u8> {
-    let seeds_vecs: Vec<Vec<u8>> = custom_seeds.iter().map(|s| s.to_vec()).collect();
-    let ix = SlowPathInstruction::Create {
-        custom_seeds: seeds_vecs,
-        bump,
-    };
-    wincode::serialize(&ix).unwrap()
-}
-
 pub fn create_funded_account(lamports: u64) -> Account {
     Account {
         lamports,
@@ -54,9 +44,10 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
     let envelope = Envelope {
         authority: *authority,
         oracle_state: OracleState {
+            oracle_metadata: StructMetadata::ZERO,
             sequence: seq,
             data: [0u8; ORACLE_BYTES],
-            _pad: [0u8; 1],
+            _paddingdata: [0u8; 1],
         },
         bump,
         _padding: [0u8; 7],
@@ -65,8 +56,7 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
         user_bitmask: Bitmask::ZERO,
         authority_aux_sequence: 0,
         program_aux_sequence: 0,
-        auxiliary_metadata: StructMetadata { struct_len: 0 },
-        oracle_metadata: StructMetadata { struct_len: 0 },
+        auxiliary_metadata: StructMetadata::ZERO,
         auxiliary_data: [0u8; AUX_DATA_SIZE],
     };
     Account {
@@ -76,25 +66,6 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
         executable: false,
         rent_epoch: 0,
     }
-}
-
-pub fn close_instruction_data() -> Vec<u8> {
-    wincode::serialize(&SlowPathInstruction::Close).unwrap()
-}
-
-pub fn set_delegated_program_instruction_data(
-    program_bitmask: [u8; c_u_soon::BITMASK_SIZE],
-    user_bitmask: [u8; c_u_soon::BITMASK_SIZE],
-) -> Vec<u8> {
-    wincode::serialize(&SlowPathInstruction::SetDelegatedProgram {
-        program_bitmask,
-        user_bitmask,
-    })
-    .unwrap()
-}
-
-pub fn clear_delegation_instruction_data() -> Vec<u8> {
-    wincode::serialize(&SlowPathInstruction::ClearDelegation).unwrap()
 }
 
 pub fn create_delegated_envelope(
@@ -106,9 +77,10 @@ pub fn create_delegated_envelope(
     let envelope = Envelope {
         authority: *authority,
         oracle_state: OracleState {
+            oracle_metadata: StructMetadata::ZERO,
             sequence: 0,
             data: [0u8; ORACLE_BYTES],
-            _pad: [0u8; 1],
+            _paddingdata: [0u8; 1],
         },
         bump: 0,
         _padding: [0u8; 7],
@@ -117,8 +89,7 @@ pub fn create_delegated_envelope(
         user_bitmask,
         authority_aux_sequence: 0,
         program_aux_sequence: 0,
-        auxiliary_metadata: StructMetadata { struct_len: 0 },
-        oracle_metadata: StructMetadata { struct_len: 0 },
+        auxiliary_metadata: StructMetadata::ZERO,
         auxiliary_data: [0u8; AUX_DATA_SIZE],
     };
     Account {
@@ -128,36 +99,4 @@ pub fn create_delegated_envelope(
         executable: false,
         rent_epoch: 0,
     }
-}
-
-pub fn update_auxiliary_instruction_data(sequence: u64, data: [u8; AUX_DATA_SIZE]) -> Vec<u8> {
-    wincode::serialize(&SlowPathInstruction::UpdateAuxiliary { sequence, data }).unwrap()
-}
-
-pub fn update_auxiliary_force_instruction_data(
-    authority_sequence: u64,
-    program_sequence: u64,
-    data: [u8; AUX_DATA_SIZE],
-) -> Vec<u8> {
-    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryForce {
-        authority_sequence,
-        program_sequence,
-        data,
-    })
-    .unwrap()
-}
-
-pub fn update_auxiliary_delegated_instruction_data(
-    sequence: u64,
-    data: [u8; AUX_DATA_SIZE],
-) -> Vec<u8> {
-    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data }).unwrap()
-}
-
-/// Build fast path instruction data: sequence (u64 LE) followed by raw payload bytes
-pub fn create_fast_path_instruction_data(sequence: u64, payload: &[u8]) -> Vec<u8> {
-    let mut data = Vec::with_capacity(8 + payload.len());
-    data.extend_from_slice(&sequence.to_le_bytes());
-    data.extend_from_slice(payload);
-    data
 }

@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use c_u_later::{CuLater, CuLaterMask, IsCuLaterWrapper, IsNotCuLater};
+use c_u_soon::TypeHash;
 
 #[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug, PartialEq)]
 #[repr(C)]
@@ -20,16 +21,8 @@ fn test_simple_struct_masks() {
     let authority_mask = Simple::authority_mask();
 
     for i in 0..4 {
-        assert!(
-            !program_mask[i],
-            "program should not write byte {}",
-            i
-        );
-        assert!(
-            !authority_mask[i],
-            "authority should not write byte {}",
-            i
-        );
+        assert!(!program_mask[i], "program should not write byte {}", i);
+        assert!(!authority_mask[i], "authority should not write byte {}", i);
     }
 
     for i in 4..6 {
@@ -98,36 +91,100 @@ fn test_nested_struct_composition() {
     let authority_mask = Outer::authority_mask();
 
     for i in 0..4 {
-        assert!(!program_mask[i], "header byte {} should be constant for program", i);
-        assert!(!authority_mask[i], "header byte {} should be constant for authority", i);
+        assert!(
+            !program_mask[i],
+            "header byte {} should be constant for program",
+            i
+        );
+        assert!(
+            !authority_mask[i],
+            "header byte {} should be constant for authority",
+            i
+        );
     }
 
-    assert!(program_mask[4], "inner_prog byte 0 should be program-writable");
-    assert!(program_mask[5], "inner_prog byte 1 should be program-writable");
-    assert!(!program_mask[6], "inner_prog byte 2 should NOT be program-writable");
-    assert!(!program_mask[7], "inner_prog byte 3 should NOT be program-writable");
+    assert!(
+        program_mask[4],
+        "inner_prog byte 0 should be program-writable"
+    );
+    assert!(
+        program_mask[5],
+        "inner_prog byte 1 should be program-writable"
+    );
+    assert!(
+        !program_mask[6],
+        "inner_prog byte 2 should NOT be program-writable"
+    );
+    assert!(
+        !program_mask[7],
+        "inner_prog byte 3 should NOT be program-writable"
+    );
 
     for i in 4..8 {
-        assert!(!authority_mask[i], "inner_prog byte {} should not be authority-writable", i);
+        assert!(
+            !authority_mask[i],
+            "inner_prog byte {} should not be authority-writable",
+            i
+        );
     }
 
     for i in 8..12 {
-        assert!(!program_mask[i], "inner_auth byte {} should not be program-writable", i);
+        assert!(
+            !program_mask[i],
+            "inner_auth byte {} should not be program-writable",
+            i
+        );
     }
-    assert!(!authority_mask[8], "inner_auth byte 0 should NOT be authority-writable");
-    assert!(!authority_mask[9], "inner_auth byte 1 should NOT be authority-writable");
-    assert!(authority_mask[10], "inner_auth byte 2 should be authority-writable");
-    assert!(authority_mask[11], "inner_auth byte 3 should be authority-writable");
+    assert!(
+        !authority_mask[8],
+        "inner_auth byte 0 should NOT be authority-writable"
+    );
+    assert!(
+        !authority_mask[9],
+        "inner_auth byte 1 should NOT be authority-writable"
+    );
+    assert!(
+        authority_mask[10],
+        "inner_auth byte 2 should be authority-writable"
+    );
+    assert!(
+        authority_mask[11],
+        "inner_auth byte 3 should be authority-writable"
+    );
 
-    assert!(program_mask[12], "inner_both byte 0 should be program-writable");
-    assert!(program_mask[13], "inner_both byte 1 should be program-writable");
-    assert!(!program_mask[14], "inner_both byte 2 should NOT be program-writable");
-    assert!(!program_mask[15], "inner_both byte 3 should NOT be program-writable");
+    assert!(
+        program_mask[12],
+        "inner_both byte 0 should be program-writable"
+    );
+    assert!(
+        program_mask[13],
+        "inner_both byte 1 should be program-writable"
+    );
+    assert!(
+        !program_mask[14],
+        "inner_both byte 2 should NOT be program-writable"
+    );
+    assert!(
+        !program_mask[15],
+        "inner_both byte 3 should NOT be program-writable"
+    );
 
-    assert!(!authority_mask[12], "inner_both byte 0 should NOT be authority-writable");
-    assert!(!authority_mask[13], "inner_both byte 1 should NOT be authority-writable");
-    assert!(authority_mask[14], "inner_both byte 2 should be authority-writable");
-    assert!(authority_mask[15], "inner_both byte 3 should be authority-writable");
+    assert!(
+        !authority_mask[12],
+        "inner_both byte 0 should NOT be authority-writable"
+    );
+    assert!(
+        !authority_mask[13],
+        "inner_both byte 1 should NOT be authority-writable"
+    );
+    assert!(
+        authority_mask[14],
+        "inner_both byte 2 should be authority-writable"
+    );
+    assert!(
+        authority_mask[15],
+        "inner_both byte 3 should be authority-writable"
+    );
 }
 
 #[test]
@@ -146,7 +203,7 @@ fn detects_is_cu_later() {
 
 #[test]
 fn embed_non_cu_later_type() {
-    #[derive(Pod, Zeroable, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, Copy, Clone)]
     #[repr(C)]
     struct Rational {
         numerator: u16,
@@ -173,7 +230,7 @@ fn embed_non_cu_later_type() {
 
 #[test]
 fn embed_array_of_non_cu_later() {
-    #[derive(Pod, Zeroable, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, Copy, Clone)]
     #[repr(C)]
     struct Rational {
         numerator: u16,
@@ -209,12 +266,28 @@ fn test_repr_c_with_align() {
     let authority_mask = Aligned::authority_mask();
 
     for i in 0..4 {
-        assert!(program_mask[i], "data byte {} should be program-writable", i);
-        assert!(!authority_mask[i], "data byte {} should not be authority-writable", i);
+        assert!(
+            program_mask[i],
+            "data byte {} should be program-writable",
+            i
+        );
+        assert!(
+            !authority_mask[i],
+            "data byte {} should not be authority-writable",
+            i
+        );
     }
     for i in 4..8 {
-        assert!(!program_mask[i], "config byte {} should not be program-writable", i);
-        assert!(authority_mask[i], "config byte {} should be authority-writable", i);
+        assert!(
+            !program_mask[i],
+            "config byte {} should not be program-writable",
+            i
+        );
+        assert!(
+            authority_mask[i],
+            "config byte {} should be authority-writable",
+            i
+        );
     }
 }
 
@@ -287,7 +360,11 @@ fn test_inter_field_padding() {
     assert!(program_mask[0], "byte 0 (field a) should be writable");
 
     for i in 1..8 {
-        assert!(!program_mask[i], "byte {} (padding) should NOT be writable", i);
+        assert!(
+            !program_mask[i],
+            "byte {} (padding) should NOT be writable",
+            i
+        );
     }
 
     for i in 8..16 {
@@ -321,16 +398,38 @@ fn test_tail_padding() {
     let authority_mask = TailPad::authority_mask();
 
     for i in 0..8 {
-        assert!(program_mask[i], "byte {} (field big) should be program-writable", i);
-        assert!(!authority_mask[i], "byte {} (field big) should NOT be authority-writable", i);
+        assert!(
+            program_mask[i],
+            "byte {} (field big) should be program-writable",
+            i
+        );
+        assert!(
+            !authority_mask[i],
+            "byte {} (field big) should NOT be authority-writable",
+            i
+        );
     }
 
-    assert!(!program_mask[8], "byte 8 (field small) should NOT be program-writable");
-    assert!(authority_mask[8], "byte 8 (field small) should be authority-writable");
+    assert!(
+        !program_mask[8],
+        "byte 8 (field small) should NOT be program-writable"
+    );
+    assert!(
+        authority_mask[8],
+        "byte 8 (field small) should be authority-writable"
+    );
 
     for i in 9..16 {
-        assert!(!program_mask[i], "byte {} (tail padding) should NOT be program-writable", i);
-        assert!(!authority_mask[i], "byte {} (tail padding) should NOT be authority-writable", i);
+        assert!(
+            !program_mask[i],
+            "byte {} (tail padding) should NOT be program-writable",
+            i
+        );
+        assert!(
+            !authority_mask[i],
+            "byte {} (tail padding) should NOT be authority-writable",
+            i
+        );
     }
 }
 
@@ -353,7 +452,10 @@ fn test_nested_struct_with_internal_padding() {
 
     let inner_mask = InnerPadded::program_mask();
     assert!(inner_mask[0], "inner byte 0 (x) should be writable");
-    assert!(!inner_mask[1], "inner byte 1 (padding) should NOT be writable");
+    assert!(
+        !inner_mask[1],
+        "inner byte 1 (padding) should NOT be writable"
+    );
     assert!(inner_mask[2], "inner byte 2 (y low) should be writable");
     assert!(inner_mask[3], "inner byte 3 (y high) should be writable");
 
@@ -376,7 +478,10 @@ fn test_nested_struct_with_internal_padding() {
     }
 
     assert!(outer_mask[4], "byte 4 (inner.x) should be writable");
-    assert!(!outer_mask[5], "byte 5 (inner padding) should NOT be writable");
+    assert!(
+        !outer_mask[5],
+        "byte 5 (inner padding) should NOT be writable"
+    );
     assert!(outer_mask[6], "byte 6 (inner.y low) should be writable");
     assert!(outer_mask[7], "byte 7 (inner.y high) should be writable");
 }
@@ -398,9 +503,21 @@ fn test_repeated_padded_structs() {
         let base = elem * 4;
 
         assert!(mask[base], "element {} byte 0 (x) should be writable", elem);
-        assert!(!mask[base + 1], "element {} byte 1 (padding) should NOT be writable", elem);
-        assert!(mask[base + 2], "element {} byte 2 (y low) should be writable", elem);
-        assert!(mask[base + 3], "element {} byte 3 (y high) should be writable", elem);
+        assert!(
+            !mask[base + 1],
+            "element {} byte 1 (padding) should NOT be writable",
+            elem
+        );
+        assert!(
+            mask[base + 2],
+            "element {} byte 2 (y low) should be writable",
+            elem
+        );
+        assert!(
+            mask[base + 3],
+            "element {} byte 3 (y high) should be writable",
+            elem
+        );
     }
 }
 
@@ -487,26 +604,48 @@ fn test_128_byte_struct() {
 
     for i in 0..64 {
         assert!(program_mask[i], "byte {} should be program-writable", i);
-        assert!(!authority_mask[i], "byte {} should NOT be authority-writable", i);
+        assert!(
+            !authority_mask[i],
+            "byte {} should NOT be authority-writable",
+            i
+        );
     }
 
     for i in 64..120 {
-        assert!(!program_mask[i], "byte {} should NOT be program-writable", i);
+        assert!(
+            !program_mask[i],
+            "byte {} should NOT be program-writable",
+            i
+        );
         assert!(authority_mask[i], "byte {} should be authority-writable", i);
     }
 
-    assert!(!program_mask[120], "byte 120 (readonly) should NOT be program-writable");
-    assert!(!authority_mask[120], "byte 120 (readonly) should NOT be authority-writable");
+    assert!(
+        !program_mask[120],
+        "byte 120 (readonly) should NOT be program-writable"
+    );
+    assert!(
+        !authority_mask[120],
+        "byte 120 (readonly) should NOT be authority-writable"
+    );
 
     for i in 121..128 {
-        assert!(!program_mask[i], "byte {} (tail padding) should NOT be program-writable", i);
-        assert!(!authority_mask[i], "byte {} (tail padding) should NOT be authority-writable", i);
+        assert!(
+            !program_mask[i],
+            "byte {} (tail padding) should NOT be program-writable",
+            i
+        );
+        assert!(
+            !authority_mask[i],
+            "byte {} (tail padding) should NOT be authority-writable",
+            i
+        );
     }
 }
 
 #[test]
 fn embed_with_program_and_authority() {
-    #[derive(Pod, Zeroable, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, Copy, Clone)]
     #[repr(C)]
     struct Pair {
         a: u16,
@@ -531,8 +670,16 @@ fn embed_with_program_and_authority() {
         assert!(authority_mask[i], "byte {} should be authority-writable", i);
     }
     for i in 4..8 {
-        assert!(!program_mask[i], "byte {} should not be program-writable", i);
-        assert!(!authority_mask[i], "byte {} should not be authority-writable", i);
+        assert!(
+            !program_mask[i],
+            "byte {} should not be program-writable",
+            i
+        );
+        assert!(
+            !authority_mask[i],
+            "byte {} should not be authority-writable",
+            i
+        );
     }
 }
 
@@ -555,4 +702,82 @@ fn embed_rejects_cu_later_type_via_authority() {
     }
 
     let _ = OuterWithBadEmbed::authority_mask();
+}
+
+// --- TypeHash integration tests ---
+
+#[test]
+fn cu_later_derive_generates_type_hash() {
+    use c_u_soon::TypeHash;
+    assert_eq!(
+        Simple::METADATA.type_size() as usize,
+        core::mem::size_of::<Simple>()
+    );
+    // Hash is deterministic
+    assert_eq!(Simple::TYPE_HASH, Simple::TYPE_HASH);
+}
+
+#[test]
+fn cu_later_type_hash_matches_standalone_derive() {
+    use c_u_soon::{combine_hash, const_fnv1a, TypeHash};
+    // Simple has fields: readonly: u32, both: u16, program_only: u8, authority_only: u8
+    let expected = combine_hash(
+        combine_hash(
+            combine_hash(
+                combine_hash(const_fnv1a(b"__struct_init__"), u32::TYPE_HASH),
+                u16::TYPE_HASH,
+            ),
+            u8::TYPE_HASH,
+        ),
+        u8::TYPE_HASH,
+    );
+    assert_eq!(Simple::TYPE_HASH, expected);
+}
+
+// --- Wire mask conversion tests ---
+
+#[test]
+fn wire_mask_polarity() {
+    let wire = c_u_later::to_program_wire_mask::<Simple>();
+    // Simple: bytes 0-3 readonly, 4-5 writable, 6 writable, 7 not writable
+    // Wire polarity: writable=0x00, blocked=0xFF
+    for i in 0..4 {
+        assert_eq!(wire.0[i], 0xFF, "byte {} should be blocked (0xFF)", i);
+    }
+    for i in 4..7 {
+        assert_eq!(wire.0[i], 0x00, "byte {} should be writable (0x00)", i);
+    }
+}
+
+#[test]
+fn wire_mask_roundtrip_with_is_write_allowed() {
+    let wire = c_u_later::to_program_wire_mask::<Simple>();
+    // bytes 4-6 should be writable
+    assert!(wire.is_write_allowed(4, 3));
+    // byte 0 should not
+    assert!(!wire.is_write_allowed(0, 1));
+}
+
+#[test]
+fn wire_mask_authority() {
+    let wire = c_u_later::to_authority_wire_mask::<Simple>();
+    // Simple authority: bytes 4-5 (both) writable, byte 7 (authority_only) writable
+    assert!(wire.is_write_allowed(4, 2));
+    assert!(wire.is_write_allowed(7, 1));
+    assert!(!wire.is_write_allowed(0, 1));
+    assert!(!wire.is_write_allowed(6, 1));
+}
+
+#[test]
+#[should_panic(expected = "on-chain bitmask only covers")]
+fn wire_mask_panics_on_out_of_range() {
+    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[repr(C)]
+    struct Big {
+        #[program]
+        data: [u8; 200],
+        rest: [u8; 56],
+    }
+
+    let _ = c_u_later::to_program_wire_mask::<Big>();
 }

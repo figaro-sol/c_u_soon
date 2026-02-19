@@ -8,19 +8,21 @@ use pinocchio::{
 use crate::slow_path;
 
 #[cold]
-#[inline(never)]
-fn hard_exit(_msg: &str, _for_error: ProgramError) -> ! {
+fn hard_exit(msg: &str, for_error: ProgramError) -> ! {
+    _hard_exit(msg, for_error.into())
+}
+#[cold]
+fn _hard_exit(_msg: &str, _e: u64) -> ! {
     #[cfg(target_os = "solana")]
     {
         // we don't have enough CUs for sol log!
 
         use core::arch::asm;
-        let e: u64 = _for_error.into();
         unsafe {
             asm!(
                 "mov64 r0, {0}",
                 "exit",
-                in(reg) e,
+                in(reg) _e,
                 options(noreturn)
             );
         }
@@ -38,6 +40,7 @@ unsafe fn sol_memcpy(_dst: *mut u8, _src: *const u8, _n: u64) -> ! {
     #[cfg(target_os = "solana")]
     {
         // why can we do this? void syscalls set r0 to 0 which is what we already want to return
+        // todo verify is this dependable behavior
         unsafe {
             core::arch::asm!(
                 "call sol_memcpy_",
@@ -59,13 +62,12 @@ unsafe fn sol_memcpy(_dst: *mut u8, _src: *const u8, _n: u64) -> ! {
 // but having mostly plain rust makes the development far easier
 // we could save 1 CU on never using r0 and on happy path
 pub(super) unsafe fn fast_path(input: *mut u8) -> u64 {
-    let num_accounts = *(input as *const u64);
+    let mut ctx = InstructionContext::new_unchecked(input);
+    let num_accounts = ctx.remaining();
 
     if num_accounts != 2 {
         return slow_path::slow_entrypoint(input);
     }
-
-    let mut ctx = InstructionContext::new_unchecked(input);
 
     let Ok(authority_account) =
         ctx.next_account_guarded(&AssumeNeverDup::new(), &CheckLikeType::<()>::new())
@@ -115,28 +117,35 @@ pub(super) unsafe fn fast_path(input: *mut u8) -> u64 {
 
     // force to only load the first byte.
     // this gives us trivial clamping to prevent reading/writing off of the end
-    // this is quite important since if metadata is ever added,
-    // this prevents the user from turning this into a full write-past-the-oracle problem
-
     let data_size = *raw_instruction_data_header as u64;
-    let data_ptr = raw_instruction_data_header.add(std::mem::size_of::<u64>());
-    let sequence = *(data_ptr as *const u64);
+    let data_ptr = raw_instruction_data_header.add(core::mem::size_of::<u64>());
+
+    // validate oracle struct identity: instruction must carry matching oracle_metadata [+3 CUs]
+    let instr_metadata = *(data_ptr as *const u64);
+
+    if instr_metadata != oracle_data.oracle_state.oracle_metadata.0 {
+        hard_exit(
+            "oracle metadata mismatch",
+            ProgramError::InvalidInstructionData,
+        );
+    }
+
+    // read sequence (oracle_meta is 8 bytes, sequence follows at +8)
+    let sequence = *(data_ptr.add(core::mem::size_of::<u64>()) as *const u64);
 
     if sequence <= oracle_data.oracle_state.sequence {
         hard_exit("Sequence stale", ProgramError::InvalidInstructionData);
     }
 
-    // by the u8 construction we can assert that this is true already
-    // this only helps remind the compiler
-
-    // trick here where we copy the sequence as part of the memcpy
-    // avoids pointer manip as well as the store
-    let oracle_state_bytes_mut = bytemuck::bytes_of_mut(&mut oracle_data.oracle_state);
+    // copy oracle_meta + sequence + payload into oracle_state in one shot.
+    // oracle_meta is oracle_state[0], so data_ptr aligns directly with oracle_state start.
+    // overwriting oracle_meta is a no-op since it was validated to match above.
+    let oracle_state_bytes_mut = &mut oracle_data.oracle_state as *mut _ as *mut u8;
 
     // informing the compiler that the input has a constant address very sadly does not work
     // it just inserts pointless ops. but computing the known constant offsets and adding to the constant base
     // works perfectly
-    let oracle_state_bytes_offset = oracle_state_bytes_mut.as_ptr().offset_from(input);
+    let oracle_state_bytes_offset = oracle_state_bytes_mut.offset_from(input);
     let instruction_data_offset = data_ptr.offset_from(input);
     let constant_propagated_oracle_pointer =
         (INPUT_BASE + oracle_state_bytes_offset as u64) as *mut u8;

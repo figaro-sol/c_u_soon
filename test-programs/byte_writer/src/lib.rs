@@ -38,16 +38,17 @@ pub fn process_instruction(
     }
     match instruction_data[0] {
         0x00 => {
-            if instruction_data.len() < 10 {
+            if instruction_data.len() < 18 {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            let payload_len = instruction_data[9] as usize;
-            if instruction_data.len() < 10 + payload_len {
+            let oracle_meta = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let sequence = u64::from_le_bytes(instruction_data[9..17].try_into().unwrap());
+            let payload_len = instruction_data[17] as usize;
+            if instruction_data.len() < 18 + payload_len {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let payload = &instruction_data[10..10 + payload_len];
-            update_via_fast_path(accounts, sequence, payload)
+            let payload = &instruction_data[18..18 + payload_len];
+            update_via_fast_path(accounts, oracle_meta, sequence, payload)
         }
         0x01 => {
             if instruction_data.len() < 1 + 8 + 256 {
@@ -81,19 +82,20 @@ pub fn process_instruction(
 
 fn update_via_fast_path(
     accounts: &[AccountView],
+    oracle_meta: u64,
     sequence: u64,
     payload: &[u8],
 ) -> ProgramResult {
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    // Fast path instruction data: [sequence: u64 LE][payload bytes]
-    // The runtime prepends the length field; data_size = first byte of that length
-    let mut ix_data = [0u8; 8 + 255];
-    ix_data[..8].copy_from_slice(&sequence.to_le_bytes());
-    let payload_len = payload.len().min(255);
-    ix_data[8..8 + payload_len].copy_from_slice(&payload[..payload_len]);
-    let ix_data = &ix_data[..8 + payload_len];
+    // Fast path instruction data: [oracle_meta: u64 LE][sequence: u64 LE][payload bytes]
+    let mut ix_data = [0u8; 8 + 8 + 239];
+    ix_data[..8].copy_from_slice(&oracle_meta.to_le_bytes());
+    ix_data[8..16].copy_from_slice(&sequence.to_le_bytes());
+    let payload_len = payload.len().min(239);
+    ix_data[16..16 + payload_len].copy_from_slice(&payload[..payload_len]);
+    let ix_data = &ix_data[..8 + 8 + payload_len];
 
     let cpi_accounts = [
         InstructionAccount::readonly_signer(accounts[0].address()), // authority, signer
