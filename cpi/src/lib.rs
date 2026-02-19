@@ -8,9 +8,9 @@ use pinocchio::{
     AccountView, ProgramResult,
 };
 
-const UPDATE_AUX_DISC: u32 = 4;
-const UPDATE_AUX_DELEGATED_DISC: u32 = 5;
-const UPDATE_AUX_FORCE_DISC: u32 = 6;
+pub const UPDATE_AUX_DISC: u32 = 4;
+pub const UPDATE_AUX_DELEGATED_DISC: u32 = 5;
+pub const UPDATE_AUX_FORCE_DISC: u32 = 6;
 
 const SLOW_AUX_SIZE: usize = 4 + 8 + AUX_DATA_SIZE; // 268
 const SLOW_AUX_FORCE_SIZE: usize = 4 + 8 + 8 + AUX_DATA_SIZE; // 276

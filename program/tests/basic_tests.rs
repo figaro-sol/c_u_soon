@@ -1,6 +1,8 @@
 mod common;
 
 use c_u_soon::{Bitmask, Envelope, StructMetadata, AUX_DATA_SIZE, ORACLE_BYTES};
+use c_u_soon_client_common::SlowPathInstruction;
+use c_u_soon_cpi::{UPDATE_AUX_DELEGATED_DISC, UPDATE_AUX_DISC, UPDATE_AUX_FORCE_DISC};
 use c_u_soon_client::{
     clear_delegation_instruction_data, close_instruction_data, create_instruction_data,
     fast_path_instruction_data, set_delegated_program_instruction_data,
@@ -1724,5 +1726,34 @@ fn test_update_auxiliary_force_sequence_boundaries() {
             (delegation_authority, create_funded_account(0)),
         ],
         &[Check::success()],
+    );
+}
+
+// -- Discriminant sync: CPI constants must match wincode serialization --
+
+fn wincode_discriminant(ix: &SlowPathInstruction) -> u32 {
+    let bytes = wincode::serialize(ix).unwrap();
+    u32::from_le_bytes(bytes[..4].try_into().unwrap())
+}
+
+#[test]
+fn test_cpi_discriminants_match_wincode() {
+    let aux_data = [0u8; AUX_DATA_SIZE];
+
+    assert_eq!(
+        wincode_discriminant(&SlowPathInstruction::UpdateAuxiliary { sequence: 0, data: aux_data }),
+        UPDATE_AUX_DISC,
+    );
+    assert_eq!(
+        wincode_discriminant(&SlowPathInstruction::UpdateAuxiliaryDelegated { sequence: 0, data: aux_data }),
+        UPDATE_AUX_DELEGATED_DISC,
+    );
+    assert_eq!(
+        wincode_discriminant(&SlowPathInstruction::UpdateAuxiliaryForce {
+            authority_sequence: 0,
+            program_sequence: 0,
+            data: aux_data,
+        }),
+        UPDATE_AUX_FORCE_DISC,
     );
 }

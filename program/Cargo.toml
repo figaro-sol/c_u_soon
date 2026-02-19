@@ -18,6 +18,7 @@ pinocchio-system = "0.5"
 
 [dev-dependencies]
 c_u_soon_client = { path = "../client" }
+c_u_soon_cpi = { path = "../cpi" }
 litesvm = "0.9.1"
 log = "0.4"
 mollusk-svm = "0.10"
