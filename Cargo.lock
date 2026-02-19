@@ -637,15 +637,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "c_u_soon",
- "c_u_soon_client_common",
- "wincode 0.2.5",
-]
-
-[[package]]
-name = "c_u_soon_client_common"
-version = "0.1.0"
-dependencies = [
- "c_u_soon",
+ "c_u_soon_instruction",
  "wincode 0.2.5",
 ]
 
@@ -667,13 +659,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "c_u_soon_instruction"
+version = "0.1.0"
+dependencies = [
+ "c_u_soon",
+ "wincode 0.2.5",
+]
+
+[[package]]
 name = "c_u_soon_program"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "c_u_soon",
  "c_u_soon_client",
- "c_u_soon_client_common",
+ "c_u_soon_cpi",
+ "c_u_soon_instruction",
  "litesvm",
  "log",
  "mollusk-svm",

@@ -1,7 +1,7 @@
 mod common;
 
 use c_u_soon::{Bitmask, Envelope, StructMetadata, AUX_DATA_SIZE, ORACLE_BYTES};
-use c_u_soon_client_common::SlowPathInstruction;
+use c_u_soon_instruction::SlowPathInstruction;
 use c_u_soon_cpi::{UPDATE_AUX_DELEGATED_DISC, UPDATE_AUX_DISC, UPDATE_AUX_FORCE_DISC};
 use c_u_soon_client::{
     clear_delegation_instruction_data, close_instruction_data, create_instruction_data,

@@ -1,5 +1,5 @@
 use c_u_soon::{Bitmask, StructMetadata, TypeHash, AUX_DATA_SIZE};
-use c_u_soon_client_common::SlowPathInstruction;
+use c_u_soon_instruction::SlowPathInstruction;
 
 /// Build fast path instruction data: `[meta:8][seq:8][payload]`.
 pub fn fast_path_instruction_data(oracle_meta: u64, sequence: u64, payload: &[u8]) -> Vec<u8> {
