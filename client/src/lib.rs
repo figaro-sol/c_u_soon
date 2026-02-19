@@ -1,4 +1,5 @@
-use c_u_soon::{Bitmask, SlowPathInstruction, StructMetadata, TypeHash, AUX_DATA_SIZE, BITMASK_SIZE};
+use c_u_soon::{Bitmask, StructMetadata, TypeHash, AUX_DATA_SIZE};
+use c_u_soon_client_common::SlowPathInstruction;
 
 pub fn fast_path_instruction_data(oracle_meta: u64, sequence: u64, payload: &[u8]) -> Vec<u8> {
     let mut data = Vec::with_capacity(8 + 8 + payload.len());

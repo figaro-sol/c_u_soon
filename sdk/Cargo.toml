@@ -5,10 +5,10 @@ edition = { workspace = true }
 license = { workspace = true }
 
 [features]
+default = []
 derive = ["dep:c_u_soon_derive"]
 
 [dependencies]
 bytemuck = { workspace = true }
 solana-address = { workspace = true }
-wincode = { workspace = true }
 c_u_soon_derive = { path = "../c_u_soon_derive", optional = true }

@@ -9,6 +9,7 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 c_u_soon = { path = "../sdk" }
+c_u_soon_client_common = { path = "../client_common" }
 bytemuck = { workspace = true }
 wincode = { workspace = true }
 pinocchio = { workspace = true, features = ["cpi"] }

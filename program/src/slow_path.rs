@@ -1,4 +1,5 @@
-use c_u_soon::{Bitmask, SlowPathInstruction};
+use c_u_soon::Bitmask;
+use c_u_soon_client_common::SlowPathInstruction;
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
 use super::instructions;

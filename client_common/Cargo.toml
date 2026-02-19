@@ -1,11 +1,9 @@
 [package]
-name = "c_u_soon_client"
+name = "c_u_soon_client_common"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 
 [dependencies]
 c_u_soon = { path = "../sdk" }
-c_u_soon_client_common = { path = "../client_common" }
-bytemuck = { workspace = true }
 wincode = { workspace = true }
