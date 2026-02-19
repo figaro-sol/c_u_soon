@@ -15,7 +15,7 @@ pub const ORACLE_ACCOUNT_SIZE: usize = core::mem::size_of::<OracleState>();
 pub const ORACLE_BYTES: usize = 239;
 
 pub const AUX_DATA_SIZE: usize = 256;
-pub const BITMASK_SIZE: usize = 128;
+pub const BITMASK_SIZE: usize = 256;
 
 /// Packed oracle struct identity: bits[63:56] = type_size (u8), bits[55:0] = 56-bit hash.
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq, Eq)]
@@ -48,8 +48,8 @@ const _: () = assert!(
 );
 
 const _: () = assert!(
-    core::mem::size_of::<Envelope>() == 864,
-    "Envelope must be 864 bytes"
+    core::mem::size_of::<Envelope>() == 1120,
+    "Envelope must be 1120 bytes"
 );
 
 // --- TypeHash: const-evaluable type identity for envelope data ---
@@ -121,12 +121,12 @@ pub struct Envelope {
     pub bump: u8,                            // 1   [288]
     pub _padding: [u8; 7],                   // 7   [289..296]
     pub delegation_authority: Address,       // 32  [296..328]
-    pub program_bitmask: Bitmask,            // 128 [328..456]
-    pub user_bitmask: Bitmask,               // 128 [456..584]
-    pub authority_aux_sequence: u64,         // 8   [584..592]
-    pub program_aux_sequence: u64,           // 8   [592..600]
-    pub auxiliary_metadata: StructMetadata,  // 8   [600..608]
-    pub auxiliary_data: [u8; AUX_DATA_SIZE], // 256 [608..864]
+    pub program_bitmask: Bitmask,            // 256 [328..584]
+    pub user_bitmask: Bitmask,               // 256 [584..840]
+    pub authority_aux_sequence: u64,         // 8   [840..848]
+    pub program_aux_sequence: u64,           // 8   [848..856]
+    pub auxiliary_metadata: StructMetadata,  // 8   [856..864]
+    pub auxiliary_data: [u8; AUX_DATA_SIZE], // 256 [864..1120]
 }
 
 impl Envelope {
@@ -202,7 +202,7 @@ impl Bitmask {
 
     #[inline]
     pub fn set_bit(&mut self, byte_idx: usize) {
-        if byte_idx >= AUX_DATA_SIZE {
+        if byte_idx >= BITMASK_SIZE {
             return;
         }
         self.0[byte_idx] = 0x00;
@@ -210,7 +210,7 @@ impl Bitmask {
 
     #[inline]
     pub fn clear_bit(&mut self, byte_idx: usize) {
-        if byte_idx >= AUX_DATA_SIZE {
+        if byte_idx >= BITMASK_SIZE {
             return;
         }
         self.0[byte_idx] = 0xFF;
@@ -218,7 +218,7 @@ impl Bitmask {
 
     #[inline]
     pub fn get_bit(&self, byte_idx: usize) -> bool {
-        if byte_idx >= AUX_DATA_SIZE {
+        if byte_idx >= BITMASK_SIZE {
             return false;
         }
         self.0[byte_idx] == 0x00
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn test_envelope_size() {
-        assert_eq!(core::mem::size_of::<Envelope>(), 864);
+        assert_eq!(core::mem::size_of::<Envelope>(), 1120);
     }
 
     #[test]
@@ -750,5 +750,81 @@ mod tests {
     fn test_envelope_aux_zero_metadata_rejects() {
         let env = Envelope::zeroed();
         assert!(env.aux::<u32>().is_none());
+    }
+
+    #[test]
+    fn test_bitmask_high_offset_set_get() {
+        let mut bitmask = Bitmask::ZERO;
+        assert!(!bitmask.get_bit(128));
+        assert!(!bitmask.get_bit(200));
+        assert!(!bitmask.get_bit(255));
+
+        bitmask.set_bit(128);
+        bitmask.set_bit(200);
+        bitmask.set_bit(255);
+
+        assert!(bitmask.get_bit(128));
+        assert!(bitmask.get_bit(200));
+        assert!(bitmask.get_bit(255));
+        assert!(!bitmask.get_bit(127)); // adjacent untouched
+        assert!(!bitmask.get_bit(129)); // adjacent untouched
+    }
+
+    #[test]
+    fn test_apply_masked_update_high_offsets_writable() {
+        let mut bitmask = Bitmask::ZERO;
+        for i in 128..256 {
+            bitmask.set_bit(i);
+        }
+
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let mut src = [0u8; AUX_DATA_SIZE];
+        src[128] = 0xAA;
+        src[200] = 0xBB;
+        src[255] = 0xCC;
+
+        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert_eq!(dest[128], 0xAA);
+        assert_eq!(dest[200], 0xBB);
+        assert_eq!(dest[255], 0xCC);
+    }
+
+    #[test]
+    fn test_apply_masked_update_high_offsets_blocked() {
+        let bitmask = Bitmask::ZERO; // all blocked
+
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let mut src = [0u8; AUX_DATA_SIZE];
+        src[200] = 0xFF;
+
+        assert!(!bitmask.apply_masked_update(&mut dest, &src));
+        assert_eq!(dest[200], 0);
+    }
+
+    #[test]
+    fn test_apply_masked_update_mixed_high_low() {
+        let mut bitmask = Bitmask::ZERO;
+        bitmask.set_bit(0);   // low writable
+        bitmask.set_bit(1);   // low writable
+        bitmask.set_bit(200); // high writable
+        bitmask.set_bit(255); // high writable
+
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let mut src = [0u8; AUX_DATA_SIZE];
+        src[0] = 0x11;
+        src[1] = 0x22;
+        src[200] = 0x33;
+        src[255] = 0x44;
+
+        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert_eq!(dest[0], 0x11);
+        assert_eq!(dest[1], 0x22);
+        assert_eq!(dest[200], 0x33);
+        assert_eq!(dest[255], 0x44);
+
+        // Now try writing to a blocked byte
+        let mut src2 = dest;
+        src2[2] = 0xFF; // blocked
+        assert!(!bitmask.apply_masked_update(&mut dest, &src2));
     }
 }
