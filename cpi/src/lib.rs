@@ -3,6 +3,7 @@
 use c_u_soon::{AUX_DATA_SIZE, ORACLE_BYTES};
 use pinocchio::{
     cpi::invoke,
+    error::ProgramError,
     instruction::{InstructionAccount, InstructionView},
     AccountView, ProgramResult,
 };
@@ -23,7 +24,13 @@ pub fn invoke_fast_path(
     sequence: u64,
     payload: &[u8],
 ) -> ProgramResult {
-    let payload_len = payload.len().min(ORACLE_BYTES);
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    if payload.len() > ORACLE_BYTES {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let payload_len = payload.len();
     let mut buf = [0u8; FAST_PATH_MAX];
     buf[..8].copy_from_slice(&oracle_meta.to_le_bytes());
     buf[8..16].copy_from_slice(&sequence.to_le_bytes());
@@ -48,6 +55,9 @@ pub fn invoke_update_auxiliary(
     sequence: u64,
     data: &[u8; AUX_DATA_SIZE],
 ) -> ProgramResult {
+    if accounts.len() < 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
     let mut buf = [0u8; SLOW_AUX_SIZE];
     buf[..4].copy_from_slice(&UPDATE_AUX_DISC.to_le_bytes());
     buf[4..12].copy_from_slice(&sequence.to_le_bytes());
@@ -73,6 +83,9 @@ pub fn invoke_update_auxiliary_delegated(
     sequence: u64,
     data: &[u8; AUX_DATA_SIZE],
 ) -> ProgramResult {
+    if accounts.len() < 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
     let mut buf = [0u8; SLOW_AUX_SIZE];
     buf[..4].copy_from_slice(&UPDATE_AUX_DELEGATED_DISC.to_le_bytes());
     buf[4..12].copy_from_slice(&sequence.to_le_bytes());
@@ -99,6 +112,9 @@ pub fn invoke_update_auxiliary_force(
     program_sequence: u64,
     data: &[u8; AUX_DATA_SIZE],
 ) -> ProgramResult {
+    if accounts.len() < 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
     let mut buf = [0u8; SLOW_AUX_FORCE_SIZE];
     buf[..4].copy_from_slice(&UPDATE_AUX_FORCE_DISC.to_le_bytes());
     buf[4..12].copy_from_slice(&authority_sequence.to_le_bytes());
