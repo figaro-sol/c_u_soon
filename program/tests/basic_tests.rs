@@ -1707,7 +1707,7 @@ fn test_update_auxiliary_force_sequence_boundaries() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let bitmask = Bitmask::from([0x00u8; 128]);
+    let bitmask = Bitmask::from([0x00u8; c_u_soon::BITMASK_SIZE]);
     let envelope = create_delegated_envelope(&authority, &delegation_authority, bitmask, bitmask);
 
     let aux_data = [0u8; AUX_DATA_SIZE];

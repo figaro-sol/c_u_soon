@@ -1,6 +1,6 @@
 mod common;
 
-use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE};
+use c_u_soon::{Bitmask, Envelope, AUX_DATA_SIZE, BITMASK_SIZE};
 use c_u_soon_client::{
     set_delegated_program_instruction_data, update_auxiliary_force_instruction_data,
     update_auxiliary_instruction_data,
@@ -54,9 +54,9 @@ fn test_delegated_bitmask_enforcement() {
     let pda = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let mut user_bitmask = [0xFFu8; 128];
+    let mut user_bitmask = [0xFFu8; BITMASK_SIZE];
     user_bitmask[0] = 0x00; // Allow write to byte 0 only
-    let program_bitmask = Bitmask::from([0xFFu8; 128]); // Block all program writes
+    let program_bitmask = Bitmask::from([0xFFu8; BITMASK_SIZE]); // Block all program writes
 
     let envelope = create_delegated_envelope(
         &authority,
@@ -103,9 +103,9 @@ fn test_delegation_requires_authority() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let mut program_bitmask = [0xFFu8; 128];
+    let mut program_bitmask = [0xFFu8; BITMASK_SIZE];
     program_bitmask[0] = 0x00;
-    let mut user_bitmask = [0xFFu8; 128];
+    let mut user_bitmask = [0xFFu8; BITMASK_SIZE];
     user_bitmask[0] = 0x00;
 
     let instruction = Instruction::new_with_bytes(
@@ -140,8 +140,8 @@ fn test_force_update_increments_sequences() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let program_bitmask = [0x00u8; 128]; // Allow all
-    let user_bitmask = [0x00u8; 128]; // Allow all
+    let program_bitmask = [0x00u8; BITMASK_SIZE]; // Allow all
+    let user_bitmask = [0x00u8; BITMASK_SIZE]; // Allow all
 
     let envelope = create_delegated_envelope(
         &authority,
