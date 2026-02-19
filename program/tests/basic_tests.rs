@@ -511,7 +511,7 @@ fn test_fast_path_rejects_wrong_oracle_metadata() {
     {
         let env: &mut Envelope =
             bytemuck::from_bytes_mut(&mut envelope.data[..core::mem::size_of::<Envelope>()]);
-        env.oracle_state.oracle_metadata = StructMetadata(oracle_meta_val);
+        env.oracle_state.oracle_metadata = StructMetadata::from_raw(oracle_meta_val);
     }
 
     // Send fast path with wrong oracle_meta

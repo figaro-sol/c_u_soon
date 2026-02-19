@@ -16,10 +16,20 @@ pub const BITMASK_SIZE: usize = 256;
 /// Constructed via [`TypeHash::METADATA`] or [`StructMetadata::new`].
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct StructMetadata(pub u64);
+pub struct StructMetadata(u64);
 
 impl StructMetadata {
     pub const ZERO: Self = Self(0);
+
+    #[inline]
+    pub const fn as_u64(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    pub const fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
 
     pub const fn new(type_size: u8, hash_56: u64) -> Self {
         Self(((type_size as u64) << 56) | (hash_56 & 0x00FF_FFFF_FFFF_FFFF))

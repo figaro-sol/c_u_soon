@@ -123,7 +123,7 @@ pub(super) unsafe fn fast_path(input: *mut u8) -> u64 {
     // validate oracle struct identity: instruction must carry matching oracle_metadata [+3 CUs]
     let instr_metadata = *(data_ptr as *const u64);
 
-    if instr_metadata != oracle_data.oracle_state.oracle_metadata.0 {
+    if instr_metadata != oracle_data.oracle_state.oracle_metadata.as_u64() {
         hard_exit(
             "oracle metadata mismatch",
             ProgramError::InvalidInstructionData,

@@ -20,7 +20,7 @@ pub fn create_instruction_data(
     let ix = SlowPathInstruction::Create {
         custom_seeds: seeds_vecs,
         bump,
-        oracle_metadata: oracle_metadata.0,
+        oracle_metadata: oracle_metadata.as_u64(),
     };
     wincode::serialize(&ix).unwrap()
 }
@@ -81,7 +81,7 @@ pub fn create_envelope_typed<T: TypeHash>(custom_seeds: &[&[u8]], bump: u8) -> V
 
 /// Typed fast path: serializes `value` as oracle payload with `T::METADATA`.
 pub fn fast_path_update_typed<T: TypeHash>(sequence: u64, value: &T) -> Vec<u8> {
-    fast_path_instruction_data(T::METADATA.0, sequence, bytemuck::bytes_of(value))
+    fast_path_instruction_data(T::METADATA.as_u64(), sequence, bytemuck::bytes_of(value))
 }
 
 #[cfg(test)]
@@ -100,7 +100,7 @@ mod tests {
     fn typed_fast_path_matches_untyped() {
         let value: u32 = 0xDEAD_BEEF;
         let typed = fast_path_update_typed::<u32>(7, &value);
-        let untyped = fast_path_instruction_data(u32::METADATA.0, 7, bytemuck::bytes_of(&value));
+        let untyped = fast_path_instruction_data(u32::METADATA.as_u64(), 7, bytemuck::bytes_of(&value));
         assert_eq!(typed, untyped);
     }
 
@@ -112,7 +112,7 @@ mod tests {
         let meta = u64::from_le_bytes(data[0..8].try_into().unwrap());
         let seq = u64::from_le_bytes(data[8..16].try_into().unwrap());
         let payload: u64 = *bytemuck::from_bytes(&data[16..24]);
-        assert_eq!(meta, u64::METADATA.0);
+        assert_eq!(meta, u64::METADATA.as_u64());
         assert_eq!(seq, 99);
         assert_eq!(payload, value);
     }

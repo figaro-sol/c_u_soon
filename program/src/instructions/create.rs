@@ -96,7 +96,7 @@ pub fn process(
     envelope.program_bitmask = Bitmask::ZERO;
     envelope.user_bitmask = Bitmask::ZERO;
     envelope.auxiliary_metadata = StructMetadata::ZERO;
-    envelope.oracle_state.oracle_metadata = StructMetadata(oracle_metadata);
+    envelope.oracle_state.oracle_metadata = StructMetadata::from_raw(oracle_metadata);
 
     Ok(())
 }
