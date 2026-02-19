@@ -1,33 +1,51 @@
 # c_u_soon
 
-A Solana program for type-safe oracle state, optimized to make frequent data updates as cheap as possible.
+Low-CU state updates with validated CPI for associated metadata. Bolts onto existing Solana programs without reworking their data structures.
 
-The idea: your program probably has some data that changes constantly (prices, rates, positions) and other data that changes rarely. Instead of paying full CU cost on every update by routing through your program, you park the hot data in a c_u_soon envelope and update it directly via the fast path. Your program still controls associated state through CPI and the delegation system, so you're not giving anything up. You're just not paying for your whole program's deserialization on every price tick.
+## Why
+
+Programs that publish data frequently (prices, rates, pool state) pay the full CU cost of their program on every update. You may not want to optimize the main program for this -- it complicates production code, it risks backwards compatibility with existing account layouts, or the accounts just don't have room. And CU optimization at this level is specialized work.
+
+c_u_soon is a separate program that owns a dedicated account (the "envelope") for frequently-updated state. The authority updates it through c_u_soon's fast path instead of routing through the main program.
+
+When the main program processes an event, it often needs to update metadata associated with that state. You could use a separate account for this, but every additional account increases transaction size. Each envelope includes 256 bytes of slow data that the main program can write via CPI, with access control between the envelope owner and the associated program. Frequently-updated data and its metadata share one account.
 
 ## How it works
 
-Each piece of hot data lives in an Envelope, an 864-byte PDA. It holds 256 bytes of type-tagged, sequenced oracle state (the fast path target), 256 bytes of auxiliary data with bytewise permission masks, and optional delegation so a host program can still modify associated state via CPI.
+Each envelope PDA has two data regions. The fast data (up to 239 bytes) is updated through the fast path -- fast updates + permissioned CPI metadata in the same account. The slow data (256 bytes) is updated through the slow path, with permission masks controlling access between the envelope owner and a delegated program.
 
-Two execution paths:
+## Fast path
 
-The fast path takes exactly 2 accounts (authority + envelope). Direct memcpy, minimal branching. Validate the signer, check the type tag, enforce monotonic sequencing, copy the payload. That's it.
+A fast path update costs ~39 CUs. It takes 2 accounts (authority signer + envelope writable), validates the authority, checks the type tag, confirms the sequence is strictly increasing, and copies the payload with a single `sol_memcpy`. No instruction deserialization, no allocations.
 
-Everything else goes through the slow path (3+ accounts): create, close, delegation setup, auxiliary data updates.
+Max payload is 239 bytes. Instruction data format: `[oracle_metadata: u64 LE][sequence: u64 LE][payload...]`
+
+Most users interact through the typed interface, which handles the metadata and serialization:
+
+```rust
+use c_u_soon_client::fast_path_update_typed;
+
+let price = PriceData { price: 150_000_000, confidence: 50, _pad: [0; 4] };
+let ix_data = fast_path_update_typed::<PriceData>(next_sequence, &price);
+// accounts: [authority (signer), envelope (writable)]
+```
 
 ## Workspace
 
 ```
-sdk/            c_u_soon        core types (Envelope, Bitmask, TypeHash), no_std
-client/         c_u_soon_client instruction builders
-program/        c_u_soon_program on-chain program (pinocchio)
-c_u_later/      c_u_later       compile-time permission masks for auxiliary data
-c_u_later/derive/               proc macro for CuLater
-c_u_soon_derive/                proc macro for TypeHash
+sdk/              c_u_soon              core types (Envelope, Bitmask, TypeHash), no_std
+client/           c_u_soon_client       off-chain instruction builders
+instruction/      c_u_soon_instruction    shared instruction types
+cpi/              c_u_soon_cpi          on-chain CPI helpers (invoke_fast_path, invoke_update_*)
+program/          c_u_soon_program      on-chain program (pinocchio)
+c_u_later/        c_u_later             compile-time permission masks for slow data
+c_u_later/derive/                       proc macro for CuLater
+c_u_soon_derive/                        proc macro for TypeHash
 ```
 
 ## Quick start
 
-Define your oracle data type:
+Define your data type with `#[derive(TypeHash)]` and `#[repr(C)]`:
 
 ```rust
 use bytemuck::{Pod, Zeroable};
@@ -42,40 +60,34 @@ struct PriceData {
 }
 ```
 
-Create an envelope and push updates:
+Create an envelope:
 
 ```rust
-use c_u_soon_client::{create_envelope_typed, fast_path_update_typed};
+use c_u_soon_client::create_envelope_typed;
 
-// Create
 let seeds: &[&[u8]] = &[b"price", b"SOL"];
 let create_data = create_envelope_typed::<PriceData>(seeds, bump);
 // accounts: [authority (signer, writable), envelope (writable), system_program]
-
-// Update via fast path
-let price = PriceData { price: 150_000_000, confidence: 50, _pad: [0; 4] };
-let update_data = fast_path_update_typed::<PriceData>(sequence, &price);
-// accounts: [authority (signer), envelope (writable)]
 ```
 
-Read oracle data from an envelope:
+Read data back:
 
 ```rust
 let envelope: &Envelope = bytemuck::from_bytes(&account_data);
 if let Some(price) = envelope.oracle::<PriceData>() {
-    println!("price={} conf={}", price.price, price.confidence);
+    // price.price, price.confidence
 }
 ```
 
 ## Type safety
 
-Every oracle and auxiliary data slot carries a `StructMetadata` tag: 8 bits of type size, 56-bit FNV-1a hash of the type structure. Read data with the wrong type and you get `None`. The fast path rejects updates where the metadata doesn't match, so you can't accidentally interpret `[u8; 12]` bytes as a `PriceData`.
+Both the fast and slow data slots carry a `StructMetadata` tag: 8 bits of type size, 56-bit FNV-1a hash of the type structure. Read data with the wrong type and you get `None`. The fast path rejects updates where the tag doesn't match, so you can't accidentally interpret `[u8; 12]` bytes as a `PriceData`.
 
 `TypeHash` is implemented for all numeric primitives, fixed-size arrays, and any `#[repr(C)]` struct via derive macro.
 
-## Delegation and auxiliary data
+## Delegation and slow data
 
-Your host program shouldn't have to give up control just because the hot data lives elsewhere. Envelopes support delegation: you register your program as the `delegation_authority`, and it can read/write the 256-byte auxiliary data section via CPI. Two 128-byte bitmasks control who can write which bytes. `program_bitmask` restricts the delegated program, `user_bitmask` restricts the authority. Each byte in the mask is either `0x00` (writable) or `0xFF` (blocked), nothing in between.
+Envelopes support delegation: you register a program as the `delegation_authority`, and it can read/write the 256-byte slow data section via CPI. Two 256-byte bitmasks control which bytes each party can write. `program_bitmask` restricts the delegated program, `user_bitmask` restricts the authority. Each byte in the mask is either `0x00` (writable) or `0xFF` (blocked).
 
 ### c_u_later
 
@@ -120,20 +132,40 @@ struct WithBlob {
 }
 ```
 
-## Instructions
+## CPI from your program
 
-### Fast path (2 accounts)
+The `c_u_soon_cpi` crate provides on-chain CPI helpers.
 
-| Account     | Constraints        |
-|-------------|--------------------|
-| authority   | signer             |
-| envelope    | writable, owned    |
+Update slow data as the delegated program:
 
-Instruction data: `[oracle_metadata: u64 LE][sequence: u64 LE][payload...]`
+```rust
+use c_u_soon_cpi::invoke_update_auxiliary_delegated;
 
-Sequence must be strictly greater than the current value.
+// accounts: [envelope(writable), delegation_auth(signer), padding, c_u_soon_program]
+invoke_update_auxiliary_delegated(&accounts, next_sequence, &new_data)?;
+```
 
-### Slow path
+Update slow data as the authority:
+
+```rust
+use c_u_soon_cpi::invoke_update_auxiliary;
+
+// accounts: [authority(signer), envelope(writable), pda(signer), c_u_soon_program]
+invoke_update_auxiliary(&accounts, next_sequence, &new_data)?;
+```
+
+Force update (both parties sign, no bitmask restriction):
+
+```rust
+use c_u_soon_cpi::invoke_update_auxiliary_force;
+
+// accounts: [authority(signer), envelope(writable), delegation_auth(signer), c_u_soon_program]
+invoke_update_auxiliary_force(&accounts, auth_sequence, prog_sequence, &new_data)?;
+```
+
+Fast path is also available via CPI (`c_u_soon_cpi::invoke_fast_path`).
+
+## Slow path instructions
 
 **Create**: initialize envelope PDA
 
@@ -159,7 +191,7 @@ Sequence must be strictly greater than the current value.
 | envelope             | writable, owned |
 | delegation_authority | signer          |
 
-**ClearDelegation**: remove delegation (wipes oracle + auxiliary data)
+**ClearDelegation**: remove delegation (wipes fast + slow data)
 
 | Account              | Constraints     |
 |----------------------|-----------------|
@@ -167,15 +199,15 @@ Sequence must be strictly greater than the current value.
 | envelope             | writable, owned |
 | delegation_authority | signer          |
 
-**UpdateAuxiliary**: authority writes auxiliary data (respects user_bitmask when delegated)
+**UpdateAuxiliary**: authority writes slow data. When no delegation exists, pda_account must sign. When delegated, pda_account is not checked but writes are restricted by user_bitmask.
 
-| Account     | Constraints     |
-|-------------|-----------------|
-| authority   | signer          |
-| envelope    | writable, owned |
-| pda_account | signer          |
+| Account     | Constraints                          |
+|-------------|--------------------------------------|
+| authority   | signer                               |
+| envelope    | writable, owned                      |
+| pda_account | signer required only if not delegated |
 
-**UpdateAuxiliaryDelegated**: delegated program writes auxiliary data (respects program_bitmask)
+**UpdateAuxiliaryDelegated**: delegated program writes slow data. Requires active delegation. Writes restricted by program_bitmask. Sequence must be strictly greater than program_aux_sequence.
 
 | Account              | Constraints     |
 |----------------------|-----------------|
@@ -183,7 +215,7 @@ Sequence must be strictly greater than the current value.
 | delegation_authority | signer          |
 | (padding)            |                 |
 
-**UpdateAuxiliaryForce**: both parties sign, bypasses bitmask restrictions
+**UpdateAuxiliaryForce**: both parties sign, no bitmask restriction. Requires active delegation. Both authority_sequence and program_sequence must be strictly greater than their stored values.
 
 | Account              | Constraints     |
 |----------------------|-----------------|
@@ -205,7 +237,7 @@ make test
 # SDK and client tests only (no BPF build needed)
 make test-sdk
 
-# Delegation security tests
+# Delegation + CPI security tests
 make test-security
 
 # CPI integration tests (LiteSVM)
