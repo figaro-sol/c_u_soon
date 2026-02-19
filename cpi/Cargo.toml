@@ -1,0 +1,9 @@
+[package]
+name = "c_u_soon_cpi"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+c_u_soon = { path = "../sdk" }
+pinocchio = { workspace = true, features = ["cpi"] }
