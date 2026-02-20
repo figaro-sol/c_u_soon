@@ -17,6 +17,13 @@ use pinocchio::{error::ProgramError, Address};
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_system_interface::program as system_program;
 
+// LOG_LOCK discipline: every test must acquire LOG_LOCK *before* calling
+// Mollusk::new(). Mollusk::new calls solana_logger::setup_with_default which
+// resets the global log level. If a test calls Mollusk::new without holding
+// the lock, it can race with test_fast_path_all_write_sizes (which holds a
+// write lock and sets log level to Off) and re-enable debug logging mid-loop.
+// Rule: read lock for normal tests, write lock if you need to suppress logs.
+
 // -- Slow path: Create --
 
 #[test]
@@ -349,9 +356,8 @@ fn test_fast_path_full_payload() {
 
 #[test]
 fn test_fast_path_all_write_sizes() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
-
     let _log_guard = LOG_LOCK.write().unwrap();
+    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
     let prev_log = log::max_level();
     log::set_max_level(log::LevelFilter::Off);
 
@@ -580,6 +586,7 @@ fn test_fast_path_rejects_wrong_oracle_metadata() {
 
 #[test]
 fn test_close_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -617,6 +624,7 @@ fn test_close_happy_path() {
 
 #[test]
 fn test_close_wrong_authority() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -649,6 +657,7 @@ fn test_close_wrong_authority() {
 
 #[test]
 fn test_close_not_program_owned() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -681,6 +690,7 @@ fn test_close_not_program_owned() {
 
 #[test]
 fn test_close_delegated_rejected() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -718,6 +728,7 @@ fn test_close_delegated_rejected() {
 
 #[test]
 fn test_close_after_clear_delegation() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -786,6 +797,7 @@ fn test_close_after_clear_delegation() {
 
 #[test]
 fn test_set_delegated_program_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -827,6 +839,7 @@ fn test_set_delegated_program_happy_path() {
 
 #[test]
 fn test_set_delegated_program_already_delegated() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -877,6 +890,7 @@ fn test_set_delegated_program_non_canonical_bitmask() {
 
 #[test]
 fn test_set_delegated_program_delegation_not_signer() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -910,6 +924,7 @@ fn test_set_delegated_program_delegation_not_signer() {
 
 #[test]
 fn test_clear_delegation_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -953,6 +968,7 @@ fn test_clear_delegation_happy_path() {
 
 #[test]
 fn test_clear_delegation_no_delegation() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -984,6 +1000,7 @@ fn test_clear_delegation_no_delegation() {
 
 #[test]
 fn test_clear_delegation_wrong_delegation_auth() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1022,7 +1039,8 @@ fn test_clear_delegation_wrong_delegation_auth() {
 // -- Slow path: UpdateAuxiliary --
 
 #[test]
-fn test_update_auxiliary_rejected_without_delegation() {
+fn test_update_auxiliary_full_write_no_delegation() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1056,6 +1074,7 @@ fn test_update_auxiliary_rejected_without_delegation() {
 
 #[test]
 fn test_update_auxiliary_masked_write_with_delegation() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1106,6 +1125,7 @@ fn test_update_auxiliary_masked_write_with_delegation() {
 
 #[test]
 fn test_update_auxiliary_masked_write_blocked() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1151,6 +1171,7 @@ fn test_update_auxiliary_masked_write_blocked() {
 
 #[test]
 fn test_update_auxiliary_stale_sequence() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1216,6 +1237,7 @@ fn test_update_auxiliary_stale_sequence() {
 
 #[test]
 fn test_update_auxiliary_delegated_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1266,6 +1288,7 @@ fn test_update_auxiliary_delegated_happy_path() {
 
 #[test]
 fn test_update_auxiliary_delegated_no_delegation() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let envelope_pubkey = Address::new_unique();
@@ -1300,6 +1323,7 @@ fn test_update_auxiliary_delegated_no_delegation() {
 
 #[test]
 fn test_update_auxiliary_delegated_wrong_delegation_auth() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1340,6 +1364,7 @@ fn test_update_auxiliary_delegated_wrong_delegation_auth() {
 
 #[test]
 fn test_update_auxiliary_delegated_stale_sequence() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1403,6 +1428,7 @@ fn test_update_auxiliary_delegated_stale_sequence() {
 
 #[test]
 fn test_update_auxiliary_delegated_bitmask_violation() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1450,6 +1476,7 @@ fn test_update_auxiliary_delegated_bitmask_violation() {
 
 #[test]
 fn test_update_auxiliary_force_happy_path() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1498,6 +1525,7 @@ fn test_update_auxiliary_force_happy_path() {
 
 #[test]
 fn test_update_auxiliary_force_authority_not_signer() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1536,6 +1564,7 @@ fn test_update_auxiliary_force_authority_not_signer() {
 
 #[test]
 fn test_update_auxiliary_force_no_delegation() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1569,6 +1598,7 @@ fn test_update_auxiliary_force_no_delegation() {
 
 #[test]
 fn test_update_auxiliary_force_stale_authority_sequence() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1631,6 +1661,7 @@ fn test_update_auxiliary_force_stale_authority_sequence() {
 
 #[test]
 fn test_update_auxiliary_force_stale_program_sequence() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1693,6 +1724,7 @@ fn test_update_auxiliary_force_stale_program_sequence() {
 
 #[test]
 fn test_update_auxiliary_force_wrong_delegation_auth() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -1734,6 +1766,7 @@ fn test_update_auxiliary_force_wrong_delegation_auth() {
 
 #[test]
 fn test_on_chain_rejects_non_canonical_bitmask() {
+    let _log = LOG_LOCK.read().unwrap();
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();

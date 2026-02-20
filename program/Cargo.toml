@@ -21,7 +21,6 @@ c_u_soon_client = { path = "../client" }
 c_u_soon_cpi = { path = "../cpi" }
 c_u_soon_instruction = { path = "../instruction" }
 wincode = { workspace = true, features = ["std"] }
-litesvm = "0.9.1"
 log = "0.4"
 mollusk-svm = "0.10"
 solana-sdk = "3.0"
