@@ -1,12 +1,28 @@
+//! Instruction data builders for the c_u_soon oracle program.
+//!
+//! Fast-path functions ([`fast_path_instruction_data`], [`fast_path_update_typed`]) build
+//! compact oracle update bytes sent directly to the program entry point. Slow-path functions
+//! serialize a [`SlowPathInstruction`] variant via `wincode` and cover account administration:
+//! create, close, delegation, and auxiliary writes.
+//!
+//! All functions return `Vec<u8>` to pass as transaction instruction data. The `_typed`
+//! variants take a `T: TypeHash` and read `T::METADATA` so you don't pass it manually.
+
 use c_u_soon::{Mask, StructMetadata, TypeHash, AUX_DATA_SIZE, MAX_CUSTOM_SEEDS, ORACLE_BYTES};
 use c_u_soon_instruction::SlowPathInstruction;
 
+/// Errors returned by instruction builders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstructionError {
+    /// Payload exceeds [`ORACLE_BYTES`] (239) bytes.
     PayloadTooLarge,
+    /// `custom_seeds` has more than [`MAX_CUSTOM_SEEDS`] (13) entries.
     TooManySeeds,
+    /// A seed is longer than 32 bytes.
     SeedTooLong,
+    /// A mask byte is not `0x00` (writable) or `0xFF` (blocked).
     NonCanonicalMask,
+    /// `wincode` serialization failed. Should not happen for valid inputs.
     SerializationFailed,
 }
 
@@ -24,7 +40,15 @@ impl core::fmt::Display for InstructionError {
 
 impl std::error::Error for InstructionError {}
 
-/// Build fast path instruction data: `[meta:8][seq:8][payload]`.
+/// Build fast-path instruction data: `[oracle_meta: u64 LE | sequence: u64 LE | payload]`.
+///
+/// - `oracle_meta`: packed [`StructMetadata`] identifying the oracle's auxiliary type schema.
+///   Use `T::METADATA.as_u64()` or the typed wrapper [`fast_path_update_typed`].
+/// - `sequence`: monotonic authority sequence counter. Must match the oracle's current value;
+///   the program rejects stale or reused sequences to prevent replay.
+/// - `payload`: raw bytes to write into the oracle data slot (≤ [`ORACLE_BYTES`] = 239 bytes).
+///
+/// Returns [`InstructionError::PayloadTooLarge`] if `payload.len() > ORACLE_BYTES`.
 pub fn fast_path_instruction_data(
     oracle_meta: u64,
     sequence: u64,
@@ -40,7 +64,15 @@ pub fn fast_path_instruction_data(
     Ok(data)
 }
 
-/// Serialize a Create instruction (slow path).
+/// Serialize a `Create` instruction (slow path): initialize an oracle PDA.
+///
+/// - `custom_seeds`: up to [`MAX_CUSTOM_SEEDS`] (13) seeds, each ≤ 32 bytes.
+///   Together with `bump` they identify the oracle's PDA address on-chain.
+/// - `bump`: the canonical PDA bump returned by `find_program_address`.
+/// - `oracle_metadata`: packed [`StructMetadata`] for the auxiliary type stored in this oracle.
+///   Use `T::METADATA` or the typed wrapper [`create_envelope_typed`].
+///
+/// Returns [`InstructionError::TooManySeeds`] or [`InstructionError::SeedTooLong`] on bad inputs.
 pub fn create_instruction_data(
     custom_seeds: &[&[u8]],
     bump: u8,
@@ -63,7 +95,9 @@ pub fn create_instruction_data(
     wincode::serialize(&ix).map_err(|_| InstructionError::SerializationFailed)
 }
 
-/// Serialize a Close instruction (slow path).
+/// Serialize a `Close` instruction (slow path): deallocate the oracle account.
+///
+/// Blocked on-chain if delegation is active. Lamports are returned to the authority.
 pub fn close_instruction_data() -> Result<Vec<u8>, InstructionError> {
     wincode::serialize(&SlowPathInstruction::Close)
         .map_err(|_| InstructionError::SerializationFailed)
@@ -76,7 +110,13 @@ fn validate_mask_canonical(mask: &Mask) -> Result<(), InstructionError> {
     Ok(())
 }
 
-/// Serialize a SetDelegatedProgram instruction (slow path).
+/// Serialize a `SetDelegatedProgram` instruction (slow path): assign write permissions to a delegate.
+///
+/// - `program_bitmask`: bytes the delegated program may write (`0x00` = writable, `0xFF` = blocked).
+/// - `user_bitmask`: bytes the oracle authority may write while delegation is active.
+///
+/// Both masks must be canonical: every byte must be exactly `0x00` or `0xFF`.
+/// Returns [`InstructionError::NonCanonicalMask`] otherwise.
 pub fn set_delegated_program_instruction_data(
     program_bitmask: Mask,
     user_bitmask: Mask,
@@ -90,13 +130,18 @@ pub fn set_delegated_program_instruction_data(
     .map_err(|_| InstructionError::SerializationFailed)
 }
 
-/// Serialize a ClearDelegation instruction (slow path).
+/// Serialize a `ClearDelegation` instruction (slow path): remove the delegated program.
+///
+/// Zeroes the oracle state and auxiliary data on-chain.
 pub fn clear_delegation_instruction_data() -> Result<Vec<u8>, InstructionError> {
     wincode::serialize(&SlowPathInstruction::ClearDelegation)
         .map_err(|_| InstructionError::SerializationFailed)
 }
 
-/// Serialize an UpdateAuxiliary instruction (slow path, authority writes).
+/// Serialize an `UpdateAuxiliary` instruction (slow path): authority writes the full aux buffer.
+///
+/// `sequence` must match the oracle's current authority sequence counter.
+/// The program rejects the instruction if it does not match.
 pub fn update_auxiliary_instruction_data(
     sequence: u64,
     data: [u8; AUX_DATA_SIZE],
@@ -105,7 +150,11 @@ pub fn update_auxiliary_instruction_data(
         .map_err(|_| InstructionError::SerializationFailed)
 }
 
-/// Serialize an UpdateAuxiliaryForce instruction (slow path, authority overrides both seqs).
+/// Serialize an `UpdateAuxiliaryForce` instruction (slow path): authority resets both sequence counters and writes aux data.
+///
+/// Sets the oracle's authority and program sequence counters to `authority_sequence` and
+/// `program_sequence` respectively, bypassing the normal match check. Use this to recover
+/// when the two counters have drifted out of sync.
 pub fn update_auxiliary_force_instruction_data(
     authority_sequence: u64,
     program_sequence: u64,
@@ -119,7 +168,10 @@ pub fn update_auxiliary_force_instruction_data(
     .map_err(|_| InstructionError::SerializationFailed)
 }
 
-/// Serialize an UpdateAuxiliaryDelegated instruction (slow path, delegation program writes).
+/// Serialize an `UpdateAuxiliaryDelegated` instruction (slow path): delegated program writes aux data.
+///
+/// `sequence` must match the oracle's current program sequence counter.
+/// The program rejects the instruction if the caller is not the registered delegated program.
 pub fn update_auxiliary_delegated_instruction_data(
     sequence: u64,
     data: [u8; AUX_DATA_SIZE],
@@ -128,7 +180,10 @@ pub fn update_auxiliary_delegated_instruction_data(
         .map_err(|_| InstructionError::SerializationFailed)
 }
 
-/// Typed Create: uses `T::METADATA` as oracle metadata.
+/// Typed `Create`: derives oracle metadata from `T::METADATA` at compile time.
+///
+/// Emits a compile-time assertion that `size_of::<T>() <= ORACLE_BYTES`.
+/// Otherwise identical to [`create_instruction_data`].
 pub fn create_envelope_typed<T: TypeHash>(
     custom_seeds: &[&[u8]],
     bump: u8,
@@ -137,7 +192,10 @@ pub fn create_envelope_typed<T: TypeHash>(
     create_instruction_data(custom_seeds, bump, T::METADATA)
 }
 
-/// Typed fast path: serializes `value` as oracle payload with `T::METADATA`.
+/// Typed fast-path update: serializes `value` as oracle payload using `T::METADATA`.
+///
+/// Casts `value` to bytes via `bytemuck::bytes_of`. Emits a compile-time assertion that
+/// `size_of::<T>() <= ORACLE_BYTES`. Otherwise identical to [`fast_path_instruction_data`].
 pub fn fast_path_update_typed<T: TypeHash>(
     sequence: u64,
     value: &T,
