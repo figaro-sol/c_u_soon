@@ -268,10 +268,7 @@ mod tests {
     #[test]
     fn test_wincode_roundtrip_update_auxiliary_delegated() {
         let data = [0xBBu8; AUX_DATA_SIZE];
-        let ix = SlowPathInstruction::UpdateAuxiliaryDelegated {
-            sequence: 99,
-            data,
-        };
+        let ix = SlowPathInstruction::UpdateAuxiliaryDelegated { sequence: 99, data };
         let serialized = wincode::serialize(&ix).unwrap();
         let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
         match deserialized {

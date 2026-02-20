@@ -321,12 +321,15 @@ fn test_cpi_slow_path_via_byte_writer() {
         &instruction,
         &[
             (authority, create_funded_account(1_000_000_000)),
-            (envelope_pubkey, create_delegated_envelope(
-                &authority,
-                &delegation_auth,
-                Mask::ALL_BLOCKED,
-                Mask::ALL_WRITABLE,
-            )),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_auth,
+                    Mask::ALL_BLOCKED,
+                    Mask::ALL_WRITABLE,
+                ),
+            ),
             (pda, create_funded_account(0)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
@@ -369,12 +372,15 @@ fn test_cpi_delegated_via_byte_writer() {
     let result = mollusk.process_and_validate_instruction(
         &instruction,
         &[
-            (envelope_pubkey, create_delegated_envelope(
-                &authority,
-                &delegation_authority,
-                Mask::ALL_WRITABLE,
-                Mask::ALL_BLOCKED,
-            )),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_authority,
+                    Mask::ALL_WRITABLE,
+                    Mask::ALL_BLOCKED,
+                ),
+            ),
             (delegation_authority, create_funded_account(1_000_000_000)),
             (padding, create_funded_account(0)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
@@ -418,12 +424,15 @@ fn test_cpi_force_via_byte_writer() {
         &instruction,
         &[
             (authority, create_funded_account(1_000_000_000)),
-            (envelope_pubkey, create_delegated_envelope(
-                &authority,
-                &delegation_authority,
-                Mask::ALL_WRITABLE,
-                Mask::ALL_WRITABLE,
-            )),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_authority,
+                    Mask::ALL_WRITABLE,
+                    Mask::ALL_WRITABLE,
+                ),
+            ),
             (delegation_authority, create_funded_account(1_000_000_000)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
@@ -505,7 +514,10 @@ fn test_cpi_attack_wrong_authority() {
         &instruction,
         &[
             (wrong_authority, create_funded_account(1_000_000_000)),
-            (envelope_pubkey, create_existing_envelope(&actual_authority, 0)),
+            (
+                envelope_pubkey,
+                create_existing_envelope(&actual_authority, 0),
+            ),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
     );
@@ -576,12 +588,15 @@ fn test_cpi_attack_wrong_delegation_authority() {
         &instruction,
         &[
             (wrong_delegation, create_funded_account(1_000_000_000)),
-            (envelope_pubkey, create_delegated_envelope(
-                &authority,
-                &real_delegation,
-                Mask::ALL_WRITABLE,
-                Mask::ALL_BLOCKED,
-            )),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &real_delegation,
+                    Mask::ALL_WRITABLE,
+                    Mask::ALL_BLOCKED,
+                ),
+            ),
             (padding, create_funded_account(0)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
@@ -618,4 +633,5 @@ fn test_cpi_attack_stale_sequence() {
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
     );
-    assert!(result.program_result.is_err());}
+    assert!(result.program_result.is_err());
+}

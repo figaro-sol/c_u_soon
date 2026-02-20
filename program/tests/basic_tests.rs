@@ -1890,9 +1890,8 @@ fn test_close_reopen_resets_state() {
     );
 
     let updated_envelope = result.resulting_accounts[1].1.clone();
-    let env: &Envelope = bytemuck::from_bytes(
-        &updated_envelope.data[..core::mem::size_of::<Envelope>()],
-    );
+    let env: &Envelope =
+        bytemuck::from_bytes(&updated_envelope.data[..core::mem::size_of::<Envelope>()]);
     assert_eq!(env.oracle_state.sequence, 5);
 
     // Step 3: Close
@@ -1935,7 +1934,10 @@ fn test_close_reopen_resets_state() {
     let reopened_env: &Envelope = bytemuck::from_bytes(
         &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
     );
-    assert_eq!(reopened_env.oracle_state.sequence, 0, "sequence should reset to 0");
+    assert_eq!(
+        reopened_env.oracle_state.sequence, 0,
+        "sequence should reset to 0"
+    );
     assert_eq!(reopened_env.authority, authority);
     assert!(!reopened_env.has_delegation());
     assert_eq!(reopened_env.auxiliary_data, [0u8; AUX_DATA_SIZE]);
