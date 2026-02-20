@@ -239,6 +239,49 @@ mod litesvm_tests {
         v
     }
 
+    fn attacker_wrong_delegation_authority(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 256);
+        v.push(0x02); // WrongDelegationAuthority
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.extend_from_slice(aux_data);
+        v
+    }
+
+    fn attacker_stale_sequence(oracle_meta: u64, sequence: u64, payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 8 + 1 + payload.len());
+        v.push(0x04); // StaleSequence
+        v.extend_from_slice(&oracle_meta.to_le_bytes());
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.push(payload.len() as u8);
+        v.extend_from_slice(payload);
+        v
+    }
+
+    fn byte_writer_slow_path_ix_data(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 256);
+        v.push(0x01); // UpdateViaSlowPath
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.extend_from_slice(aux_data);
+        v
+    }
+
+    fn byte_writer_delegated_ix_data(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 256);
+        v.push(0x02); // UpdateViaDelegated
+        v.extend_from_slice(&sequence.to_le_bytes());
+        v.extend_from_slice(aux_data);
+        v
+    }
+
+    fn byte_writer_force_ix_data(auth_seq: u64, prog_seq: u64, aux_data: &[u8; 256]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + 8 + 8 + 256);
+        v.push(0x03); // UpdateViaForce
+        v.extend_from_slice(&auth_seq.to_le_bytes());
+        v.extend_from_slice(&prog_seq.to_le_bytes());
+        v.extend_from_slice(aux_data);
+        v
+    }
+
     fn make_envelope(authority: &Address, seq: u64) -> solana_sdk::account::Account {
         use bytemuck::Zeroable;
         let envelope = Envelope {
@@ -254,6 +297,39 @@ mod litesvm_tests {
             delegation_authority: Address::zeroed(),
             program_bitmask: Mask::ALL_BLOCKED,
             user_bitmask: Mask::ALL_BLOCKED,
+            authority_aux_sequence: 0,
+            program_aux_sequence: 0,
+            auxiliary_metadata: StructMetadata::ZERO,
+            auxiliary_data: [0u8; AUX_DATA_SIZE],
+        };
+        solana_sdk::account::Account {
+            lamports: 1_000_000_000,
+            data: bytes_of(&envelope).to_vec(),
+            owner: PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        }
+    }
+
+    fn make_delegated_envelope(
+        authority: &Address,
+        delegation_auth: &Address,
+        program_bitmask: Mask,
+        user_bitmask: Mask,
+    ) -> solana_sdk::account::Account {
+        let envelope = Envelope {
+            authority: *authority,
+            oracle_state: OracleState {
+                oracle_metadata: StructMetadata::ZERO,
+                sequence: 0,
+                data: [0u8; ORACLE_BYTES],
+                _pad: [0u8; 1],
+            },
+            bump: 0,
+            _padding: [0u8; 7],
+            delegation_authority: *delegation_auth,
+            program_bitmask,
+            user_bitmask,
             authority_aux_sequence: 0,
             program_aux_sequence: 0,
             auxiliary_metadata: StructMetadata::ZERO,
@@ -449,6 +525,275 @@ mod litesvm_tests {
         assert!(
             result.is_err(),
             "Attack without PDA signer should be rejected"
+        );
+    }
+
+    /// CPI via byte_writer 0x01: UpdateAuxiliary (authority writes slow data, no delegation)
+    #[test]
+    fn test_cpi_slow_path_via_byte_writer() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(BYTE_WRITER_ID, BYTE_WRITER_SO_PATH)
+            .expect("byte_writer .so not found");
+
+        let authority_kp = Keypair::new();
+        let authority_addr = authority_kp.pubkey();
+        let pda_kp = Keypair::new();
+        let pda_addr = pda_kp.pubkey();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
+        svm.set_account(envelope_addr, make_envelope(&authority_addr, 0))
+            .unwrap();
+        svm.set_account(pda_addr, create_funded_account(0)).unwrap();
+
+        let mut aux_data = [0u8; 256];
+        aux_data[0] = 0xCC;
+        aux_data[255] = 0xDD;
+        let ix_data = byte_writer_slow_path_ix_data(1, &aux_data);
+
+        let instruction = Instruction::new_with_bytes(
+            BYTE_WRITER_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new_readonly(authority_addr, true),
+                AccountMeta::new(envelope_addr, false),
+                AccountMeta::new_readonly(pda_addr, true),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&authority_addr),
+            &[&authority_kp, &pda_kp],
+            svm.latest_blockhash(),
+        );
+
+        let result = svm.send_transaction(tx);
+        assert!(result.is_ok(), "CPI slow path should succeed: {:?}", result);
+
+        let data = svm.get_account(&envelope_addr).unwrap().data;
+        let env: &Envelope = bytemuck::from_bytes(&data[..core::mem::size_of::<Envelope>()]);
+        assert_eq!(env.authority_aux_sequence, 1);
+        assert_eq!(env.auxiliary_data[0], 0xCC);
+        assert_eq!(env.auxiliary_data[255], 0xDD);
+    }
+
+    /// CPI via byte_writer 0x02: UpdateAuxiliaryDelegated
+    #[test]
+    fn test_cpi_delegated_via_byte_writer() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(BYTE_WRITER_ID, BYTE_WRITER_SO_PATH)
+            .expect("byte_writer .so not found");
+
+        let authority_kp = Keypair::new();
+        let delegation_kp = Keypair::new();
+        let delegation_addr = delegation_kp.pubkey();
+        let padding_kp = Keypair::new();
+        let padding_addr = padding_kp.pubkey();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&delegation_addr, 1_000_000_000).unwrap();
+        // program_bitmask: all writable for delegated program
+        svm.set_account(
+            envelope_addr,
+            make_delegated_envelope(
+                &authority_kp.pubkey(),
+                &delegation_addr,
+                Mask::ALL_WRITABLE,
+                Mask::ALL_BLOCKED,
+            ),
+        )
+        .unwrap();
+        svm.set_account(padding_addr, create_funded_account(0))
+            .unwrap();
+
+        let mut aux_data = [0u8; 256];
+        aux_data[0] = 0xEE;
+        let ix_data = byte_writer_delegated_ix_data(1, &aux_data);
+
+        let instruction = Instruction::new_with_bytes(
+            BYTE_WRITER_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new(envelope_addr, false),
+                AccountMeta::new_readonly(delegation_addr, true),
+                AccountMeta::new_readonly(padding_addr, false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&delegation_addr),
+            &[&delegation_kp],
+            svm.latest_blockhash(),
+        );
+
+        let result = svm.send_transaction(tx);
+        assert!(result.is_ok(), "CPI delegated should succeed: {:?}", result);
+
+        let data = svm.get_account(&envelope_addr).unwrap().data;
+        let env: &Envelope = bytemuck::from_bytes(&data[..core::mem::size_of::<Envelope>()]);
+        assert_eq!(env.program_aux_sequence, 1);
+        assert_eq!(env.auxiliary_data[0], 0xEE);
+    }
+
+    /// CPI via byte_writer 0x03: UpdateAuxiliaryForce
+    #[test]
+    fn test_cpi_force_via_byte_writer() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(BYTE_WRITER_ID, BYTE_WRITER_SO_PATH)
+            .expect("byte_writer .so not found");
+
+        let authority_kp = Keypair::new();
+        let authority_addr = authority_kp.pubkey();
+        let delegation_kp = Keypair::new();
+        let delegation_addr = delegation_kp.pubkey();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
+        svm.set_account(
+            envelope_addr,
+            make_delegated_envelope(
+                &authority_addr,
+                &delegation_addr,
+                Mask::ALL_WRITABLE,
+                Mask::ALL_WRITABLE,
+            ),
+        )
+        .unwrap();
+        svm.set_account(delegation_addr, create_funded_account(0))
+            .unwrap();
+
+        let mut aux_data = [0u8; 256];
+        aux_data[0] = 0xFF;
+        aux_data[127] = 0xAA;
+        let ix_data = byte_writer_force_ix_data(1, 1, &aux_data);
+
+        let instruction = Instruction::new_with_bytes(
+            BYTE_WRITER_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new_readonly(authority_addr, true),
+                AccountMeta::new(envelope_addr, false),
+                AccountMeta::new_readonly(delegation_addr, true),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&authority_addr),
+            &[&authority_kp, &delegation_kp],
+            svm.latest_blockhash(),
+        );
+
+        let result = svm.send_transaction(tx);
+        assert!(result.is_ok(), "CPI force should succeed: {:?}", result);
+
+        let data = svm.get_account(&envelope_addr).unwrap().data;
+        let env: &Envelope = bytemuck::from_bytes(&data[..core::mem::size_of::<Envelope>()]);
+        assert_eq!(env.authority_aux_sequence, 1);
+        assert_eq!(env.program_aux_sequence, 1);
+        assert_eq!(env.auxiliary_data[0], 0xFF);
+        assert_eq!(env.auxiliary_data[127], 0xAA);
+    }
+
+    /// Attack: UpdateAuxiliaryDelegated with wrong delegation authority → c_u_soon rejects
+    #[test]
+    fn test_cpi_attack_wrong_delegation_authority() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(ATTACKER_PROBE_ID, ATTACKER_PROBE_SO_PATH)
+            .expect("attacker_probe .so not found; run make build-sbf-test-programs first");
+
+        let authority_kp = Keypair::new();
+        let real_delegation_kp = Keypair::new();
+        let wrong_delegation_kp = Keypair::new();
+        let wrong_delegation_addr = wrong_delegation_kp.pubkey();
+        let padding_addr = Address::new_unique();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&wrong_delegation_addr, 1_000_000_000).unwrap();
+        svm.set_account(
+            envelope_addr,
+            make_delegated_envelope(
+                &authority_kp.pubkey(),
+                &real_delegation_kp.pubkey(),
+                Mask::ALL_WRITABLE,
+                Mask::ALL_BLOCKED,
+            ),
+        )
+        .unwrap();
+        svm.set_account(padding_addr, create_funded_account(0))
+            .unwrap();
+
+        let aux_data = [0u8; 256];
+        let ix_data = attacker_wrong_delegation_authority(1, &aux_data);
+        let instruction = Instruction::new_with_bytes(
+            ATTACKER_PROBE_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new(envelope_addr, false), // [0] envelope
+                AccountMeta::new_readonly(wrong_delegation_addr, true), // [1] wrong delegation, signer
+                AccountMeta::new_readonly(padding_addr, false),         // [2] padding
+                AccountMeta::new_readonly(PROGRAM_ID, false),           // [3] c_u_soon
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&wrong_delegation_addr),
+            &[&wrong_delegation_kp],
+            svm.latest_blockhash(),
+        );
+
+        let result = svm.send_transaction(tx);
+        assert!(
+            result.is_err(),
+            "Attack with wrong delegation authority should be rejected"
+        );
+    }
+
+    /// Attack: Fast path CPI with stale sequence → c_u_soon rejects
+    #[test]
+    fn test_cpi_attack_stale_sequence() {
+        let mut svm = setup_svm();
+        svm.add_program_from_file(ATTACKER_PROBE_ID, ATTACKER_PROBE_SO_PATH)
+            .expect("attacker_probe .so not found; run make build-sbf-test-programs first");
+
+        let authority_kp = Keypair::new();
+        let authority_addr = authority_kp.pubkey();
+        let envelope_addr = Address::new_unique();
+
+        svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
+        // Envelope already at sequence 5
+        svm.set_account(envelope_addr, make_envelope(&authority_addr, 5))
+            .unwrap();
+
+        // Attack: try sequence 5 (== current, not strictly greater) → rejected
+        let ix_data = attacker_stale_sequence(0, 5, &[0xAB]);
+        let instruction = Instruction::new_with_bytes(
+            ATTACKER_PROBE_ID,
+            &ix_data,
+            vec![
+                AccountMeta::new_readonly(authority_addr, true), // [0] authority, signer
+                AccountMeta::new(envelope_addr, false),          // [1] envelope, writable
+                AccountMeta::new_readonly(PROGRAM_ID, false),    // [2] c_u_soon
+            ],
+        );
+
+        let tx = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&authority_addr),
+            &[&authority_kp],
+            svm.latest_blockhash(),
+        );
+
+        let result = svm.send_transaction(tx);
+        assert!(
+            result.is_err(),
+            "Attack with stale sequence should be rejected"
         );
     }
 }

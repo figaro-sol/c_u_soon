@@ -80,8 +80,8 @@ pub const fn combine_hash(accumulated: u64, field_hash: u64) -> u64 {
 
 /// Const-evaluable type identity for envelope oracle/auxiliary data.
 ///
-/// Hash is computed over field names and field types (for derived structs), so
-/// structs with identical layout but different field names produce different hashes.
+/// Hash is computed over the struct name and ordered field type hashes (for derived structs),
+/// so structs with the same fields but different names produce different hashes.
 /// Primitives and `[T; N]` arrays have built-in impls.
 /// Derive with `#[derive(TypeHash)]` (requires `derive` feature).
 pub trait TypeHash: Pod + Zeroable {
@@ -574,6 +574,30 @@ mod tests {
         }
         data[27] = 42;
         assert!(parse_seeds(&data).is_some());
+    }
+
+    #[test]
+    fn test_seed_parser_len_after_partial_iteration() {
+        // 3 seeds: [a], [bc], [def]
+        let data = [3, 1, b'a', 2, b'b', b'c', 3, b'd', b'e', b'f', 42];
+        let (mut parser, bump) = parse_seeds(&data).unwrap();
+        assert_eq!(bump, 42);
+        assert_eq!(parser.len(), 3);
+        assert!(!parser.is_empty());
+
+        assert_eq!(parser.next(), Some(b"a".as_slice()));
+        assert_eq!(parser.len(), 2);
+
+        assert_eq!(parser.next(), Some(b"bc".as_slice()));
+        assert_eq!(parser.len(), 1);
+        assert!(!parser.is_empty());
+
+        assert_eq!(parser.next(), Some(b"def".as_slice()));
+        assert_eq!(parser.len(), 0);
+        assert!(parser.is_empty());
+
+        assert_eq!(parser.next(), None);
+        assert_eq!(parser.len(), 0);
     }
 
     #[test]

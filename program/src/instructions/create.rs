@@ -51,6 +51,9 @@ pub fn process(
         if envelope.bump != bump {
             return Err(ProgramError::InvalidSeeds);
         }
+        if envelope.oracle_state.oracle_metadata != StructMetadata::from_raw(oracle_metadata) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         return Ok(());
     }
 

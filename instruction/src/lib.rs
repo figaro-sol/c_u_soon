@@ -8,25 +8,32 @@ use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(Debug, Clone, SchemaWrite, SchemaRead)]
 pub enum SlowPathInstruction {
+    #[wincode(tag = 0)]
     Create {
         custom_seeds: Vec<Vec<u8>>,
         bump: u8,
         oracle_metadata: u64,
     },
+    #[wincode(tag = 1)]
     Close,
+    #[wincode(tag = 2)]
     SetDelegatedProgram {
         program_bitmask: [u8; MASK_SIZE],
         user_bitmask: [u8; MASK_SIZE],
     },
+    #[wincode(tag = 3)]
     ClearDelegation,
+    #[wincode(tag = 4)]
     UpdateAuxiliary {
         sequence: u64,
         data: [u8; AUX_DATA_SIZE],
     },
+    #[wincode(tag = 5)]
     UpdateAuxiliaryDelegated {
         sequence: u64,
         data: [u8; AUX_DATA_SIZE],
     },
+    #[wincode(tag = 6)]
     UpdateAuxiliaryForce {
         authority_sequence: u64,
         program_sequence: u64,
@@ -63,6 +70,61 @@ impl SlowPathInstruction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discriminant_stability() {
+        let cases: &[(SlowPathInstruction, u32)] = &[
+            (
+                SlowPathInstruction::Create {
+                    custom_seeds: alloc::vec![],
+                    bump: 0,
+                    oracle_metadata: 0,
+                },
+                0,
+            ),
+            (SlowPathInstruction::Close, 1),
+            (
+                SlowPathInstruction::SetDelegatedProgram {
+                    program_bitmask: [0; MASK_SIZE],
+                    user_bitmask: [0; MASK_SIZE],
+                },
+                2,
+            ),
+            (SlowPathInstruction::ClearDelegation, 3),
+            (
+                SlowPathInstruction::UpdateAuxiliary {
+                    sequence: 0,
+                    data: [0; AUX_DATA_SIZE],
+                },
+                4,
+            ),
+            (
+                SlowPathInstruction::UpdateAuxiliaryDelegated {
+                    sequence: 0,
+                    data: [0; AUX_DATA_SIZE],
+                },
+                5,
+            ),
+            (
+                SlowPathInstruction::UpdateAuxiliaryForce {
+                    authority_sequence: 0,
+                    program_sequence: 0,
+                    data: [0; AUX_DATA_SIZE],
+                },
+                6,
+            ),
+        ];
+        for (ix, expected_disc) in cases {
+            let bytes = wincode::serialize(ix).unwrap();
+            let disc = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+            assert_eq!(
+                disc,
+                *expected_disc,
+                "discriminant mismatch for {:?}",
+                core::mem::discriminant(ix)
+            );
+        }
+    }
 
     #[test]
     fn test_validate_rejects_non_canonical_bitmask() {

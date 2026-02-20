@@ -33,16 +33,16 @@ struct Nested {
 }
 
 #[test]
-fn same_fields_same_hash() {
-    // Same field names + types in same order → same hash
-    assert_eq!(PairA::TYPE_HASH, PairB::TYPE_HASH);
-    assert_eq!(PairA::METADATA, PairB::METADATA);
+fn different_names_different_hash() {
+    // Same field types but different struct names → different hash
+    assert_ne!(PairA::TYPE_HASH, PairB::TYPE_HASH);
+    assert_ne!(PairA::METADATA, PairB::METADATA);
 }
 
 #[test]
 fn reorder_different_hash() {
-    // Field names are included in hash, so swapping field order changes the hash
-    // even with same types
+    // Different struct names always means different hash, but also
+    // test that type order matters with same-name structs
     #[derive(Clone, Copy, Pod, Zeroable, TypeHash)]
     #[repr(C)]
     struct AB {
@@ -64,19 +64,58 @@ fn reorder_different_hash() {
 
 #[test]
 fn same_types_different_names_different_hash() {
-    // PairA has fields (x: u32, y: u32), Reordered has (y: u32, x: u32)
-    // Same types but field name order differs → different hash
+    // PairA and Reordered have same field types but different struct names
     assert_ne!(PairA::TYPE_HASH, Reordered::TYPE_HASH);
 }
 
 #[test]
 fn nested_works() {
-    // Hash formula: for each field, combine_hash(combine_hash(acc, fnv1a(name)), type_hash)
-    let acc = const_fnv1a(b"__struct_init__");
-    let acc = combine_hash(combine_hash(acc, const_fnv1a(b"inner")), PairA::TYPE_HASH);
-    let acc = combine_hash(combine_hash(acc, const_fnv1a(b"z")), u16::TYPE_HASH);
-    let expected = combine_hash(combine_hash(acc, const_fnv1a(b"w")), u16::TYPE_HASH);
+    // Hash formula: init from struct name, then fold each field's type hash
+    let acc = const_fnv1a(b"Nested");
+    let acc = combine_hash(acc, PairA::TYPE_HASH);
+    let acc = combine_hash(acc, u16::TYPE_HASH);
+    let expected = combine_hash(acc, u16::TYPE_HASH);
     assert_eq!(Nested::TYPE_HASH, expected);
+}
+
+#[test]
+fn type_order_matters_same_name() {
+    // Two structs with the same name in different scopes can't collide at compile time,
+    // but we can verify the formula is order-sensitive with different struct names
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash)]
+    #[repr(C)]
+    struct XY {
+        x: u32,
+        y: u32,
+        z: u64,
+    }
+
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash)]
+    #[repr(C)]
+    struct YX {
+        z: u64,
+        x: u32,
+        y: u32,
+    }
+
+    // Different names → different hash, but also verify the formula:
+    let xy_expected = combine_hash(
+        combine_hash(
+            combine_hash(const_fnv1a(b"XY"), u32::TYPE_HASH),
+            u32::TYPE_HASH,
+        ),
+        u64::TYPE_HASH,
+    );
+    let yx_expected = combine_hash(
+        combine_hash(
+            combine_hash(const_fnv1a(b"YX"), u64::TYPE_HASH),
+            u32::TYPE_HASH,
+        ),
+        u32::TYPE_HASH,
+    );
+    assert_eq!(XY::TYPE_HASH, xy_expected);
+    assert_eq!(YX::TYPE_HASH, yx_expected);
+    assert_ne!(XY::TYPE_HASH, YX::TYPE_HASH);
 }
 
 #[test]

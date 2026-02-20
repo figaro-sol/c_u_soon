@@ -45,6 +45,12 @@ c_u_soon_derive/                        proc macro for TypeHash
 
 ## Quick start
 
+Enable the `derive` feature for `#[derive(TypeHash)]`:
+
+```toml
+c_u_soon = { version = "...", features = ["derive"] }
+```
+
 Define your data type with `#[derive(TypeHash)]` and `#[repr(C)]`:
 
 ```rust
@@ -87,7 +93,7 @@ Both the fast and slow data slots carry a `StructMetadata` tag: 8 bits of type s
 
 ## Delegation and slow data
 
-Envelopes support delegation: you register a program as the `delegation_authority`, and it can read/write the 256-byte slow data section via CPI. Two 256-byte masks control which bytes each party can write. `program_bitmask` restricts the delegated program, `user_bitmask` restricts the authority. Each byte in the mask is either `0x00` (writable) or `0xFF` (blocked).
+Envelopes support delegation: you register a program as the `delegation_authority`, and it can read/write the 256-byte slow data section via CPI. Two 256-byte masks control which bytes each party can write. `program_bitmask` restricts the delegated program, `user_bitmask` restricts the authority.
 
 ### c_u_later
 
@@ -141,8 +147,7 @@ Update slow data as the delegated program:
 ```rust
 use c_u_soon_cpi::invoke_update_auxiliary_delegated;
 
-// accounts: [envelope(writable), delegation_auth(signer), padding, c_u_soon_program]
-invoke_update_auxiliary_delegated(&accounts, next_sequence, &new_data)?;
+invoke_update_auxiliary_delegated(envelope, delegation_auth, padding, c_u_soon_program, next_sequence, &new_data)?;
 ```
 
 Update slow data as the authority:
@@ -150,8 +155,7 @@ Update slow data as the authority:
 ```rust
 use c_u_soon_cpi::invoke_update_auxiliary;
 
-// accounts: [authority(signer), envelope(writable), pda(signer), c_u_soon_program]
-invoke_update_auxiliary(&accounts, next_sequence, &new_data)?;
+invoke_update_auxiliary(authority, envelope, pda, c_u_soon_program, next_sequence, &new_data)?;
 ```
 
 Force update (both parties sign, no bitmask restriction):
@@ -159,8 +163,7 @@ Force update (both parties sign, no bitmask restriction):
 ```rust
 use c_u_soon_cpi::invoke_update_auxiliary_force;
 
-// accounts: [authority(signer), envelope(writable), delegation_auth(signer), c_u_soon_program]
-invoke_update_auxiliary_force(&accounts, auth_sequence, prog_sequence, &new_data)?;
+invoke_update_auxiliary_force(authority, envelope, delegation_auth, c_u_soon_program, auth_sequence, prog_sequence, &new_data)?;
 ```
 
 Fast path is also available via CPI (`c_u_soon_cpi::invoke_fast_path`).

@@ -33,7 +33,7 @@ pub fn process_instruction(
     }
     match instruction_data[0] {
         0x00 => {
-            if instruction_data.len() < 18 {
+            if accounts.len() < 3 || instruction_data.len() < 18 {
                 return Err(ProgramError::InvalidInstructionData);
             }
             let oracle_meta = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
@@ -43,32 +43,61 @@ pub fn process_instruction(
                 return Err(ProgramError::InvalidInstructionData);
             }
             let payload = &instruction_data[18..18 + payload_len];
-            c_u_soon_cpi::invoke_fast_path(accounts, oracle_meta, sequence, payload)
+            c_u_soon_cpi::invoke_fast_path(
+                &accounts[0],
+                &accounts[1],
+                &accounts[2],
+                oracle_meta,
+                sequence,
+                payload,
+            )
         }
         0x01 => {
-            if instruction_data.len() < 1 + 8 + 256 {
+            if accounts.len() < 4 || instruction_data.len() < 1 + 8 + 256 {
                 return Err(ProgramError::InvalidInstructionData);
             }
             let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
             let aux_data: &[u8; 256] = instruction_data[9..9 + 256].try_into().unwrap();
-            c_u_soon_cpi::invoke_update_auxiliary(accounts, sequence, aux_data)
+            c_u_soon_cpi::invoke_update_auxiliary(
+                &accounts[0],
+                &accounts[1],
+                &accounts[2],
+                &accounts[3],
+                sequence,
+                aux_data,
+            )
         }
         0x02 => {
-            if instruction_data.len() < 1 + 8 + 256 {
+            if accounts.len() < 4 || instruction_data.len() < 1 + 8 + 256 {
                 return Err(ProgramError::InvalidInstructionData);
             }
             let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
             let aux_data: &[u8; 256] = instruction_data[9..9 + 256].try_into().unwrap();
-            c_u_soon_cpi::invoke_update_auxiliary_delegated(accounts, sequence, aux_data)
+            c_u_soon_cpi::invoke_update_auxiliary_delegated(
+                &accounts[0],
+                &accounts[1],
+                &accounts[2],
+                &accounts[3],
+                sequence,
+                aux_data,
+            )
         }
         0x03 => {
-            if instruction_data.len() < 1 + 8 + 8 + 256 {
+            if accounts.len() < 4 || instruction_data.len() < 1 + 8 + 8 + 256 {
                 return Err(ProgramError::InvalidInstructionData);
             }
             let auth_seq = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
             let prog_seq = u64::from_le_bytes(instruction_data[9..17].try_into().unwrap());
             let aux_data: &[u8; 256] = instruction_data[17..17 + 256].try_into().unwrap();
-            c_u_soon_cpi::invoke_update_auxiliary_force(accounts, auth_seq, prog_seq, aux_data)
+            c_u_soon_cpi::invoke_update_auxiliary_force(
+                &accounts[0],
+                &accounts[1],
+                &accounts[2],
+                &accounts[3],
+                auth_seq,
+                prog_seq,
+                aux_data,
+            )
         }
         0x04 => Ok(()), // Echo
         _ => Err(ProgramError::InvalidInstructionData),

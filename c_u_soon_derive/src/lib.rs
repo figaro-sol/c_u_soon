@@ -40,17 +40,14 @@ fn derive_type_hash_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    let mut hash_expr: TokenStream2 = quote! { ::c_u_soon::const_fnv1a(b"__struct_init__") };
+    let mut hash_expr: TokenStream2 =
+        quote! { ::c_u_soon::const_fnv1a(stringify!(#name).as_bytes()) };
 
     for field in fields.iter() {
         let field_ty = &field.ty;
-        let field_name = field.ident.as_ref().unwrap().to_string();
         hash_expr = quote! {
             ::c_u_soon::combine_hash(
-                ::c_u_soon::combine_hash(
-                    #hash_expr,
-                    ::c_u_soon::const_fnv1a(#field_name.as_bytes()),
-                ),
+                #hash_expr,
                 <#field_ty as ::c_u_soon::TypeHash>::TYPE_HASH,
             )
         };
