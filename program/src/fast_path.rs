@@ -7,6 +7,10 @@ use pinocchio::{
 
 use crate::slow_path;
 
+/// Exits the program with `for_error` as the return code.
+///
+/// On Solana: loads the code into r0 via asm and executes `exit`. No CUs are spent on logging.
+/// Off Solana (tests): panics with `msg`.
 #[cold]
 fn hard_exit(msg: &str, for_error: ProgramError) -> ! {
     _hard_exit(msg, for_error.into())
@@ -33,8 +37,25 @@ fn _hard_exit(_msg: &str, _e: u64) -> ! {
     }
 }
 
+/// Solana sBPF fixed input buffer address.
+///
+/// The runtime always maps the input blob at this address. Using this constant instead of
+/// the `input` parameter lets the compiler fold pointer arithmetic at compile time, avoiding
+/// runtime additions in the generated sBPF.
 const INPUT_BASE: u64 = 0x400000000;
 
+/// Calls the `sol_memcpy_` syscall and immediately exits.
+///
+/// `sol_memcpy_` is a void syscall; it sets r0 = 0 (success). The trailing `exit` instruction
+/// returns that 0 to the Solana runtime without unwinding the call stack.
+///
+/// # Safety
+///
+/// Only valid on `target_os = "solana"`. Off-target paths are `unreachable!`.
+///
+/// - `dst` must be writable for `n` bytes; `src` must be readable for `n` bytes.
+/// - `dst` and `src` must not overlap (standard `memcpy` contract).
+/// - Never returns. All call sites must be the last action on the success path.
 #[inline]
 unsafe fn sol_memcpy(_dst: *mut u8, _src: *const u8, _n: u64) -> ! {
     #[cfg(target_os = "solana")]
@@ -61,6 +82,33 @@ unsafe fn sol_memcpy(_dst: *mut u8, _src: *const u8, _n: u64) -> ! {
 // This is probably better written as asm
 // but having mostly plain rust makes the development far easier
 // we could save 1 CU on never using r0 and on happy path
+/// Fast-path oracle data update.
+///
+/// Called from `entrypoint` with the Solana runtime's input buffer. Handles the
+/// two-account case (authority + envelope) directly; falls through to `slow_path`
+/// for any other account count.
+///
+/// # Validation sequence
+///
+/// 1. Account count must be exactly 2; otherwise delegates to [`slow_path::slow_entrypoint`].
+/// 2. Account 0: must be a signer with 0 bytes of data (authority).
+/// 3. Account 1: must have exactly `size_of::<Envelope>()` bytes of data (oracle).
+/// 4. `envelope.authority` must equal the authority account's address.
+/// 5. Instruction `oracle_metadata` must match `envelope.oracle_state.oracle_metadata`.
+/// 6. Instruction `sequence` must be strictly greater than `envelope.oracle_state.sequence`.
+///
+/// On success: copies `[oracle_meta | sequence | payload]` into `oracle_state` via a
+/// single `sol_memcpy_` syscall, then exits with 0. `sol_memcpy` calls `exit` directly,
+/// so `fast_path` never returns on the success path.
+///
+/// # Safety
+///
+/// - `input` must be the Solana runtime's input buffer pointer (`0x400000000`).
+/// - `borrow_unchecked_mut` is safe because `AssumeNeverDup` guarantees no duplicate accounts.
+/// - `bytemuck::from_bytes_mut::<Envelope>` is safe because `AssumeLikeType::<Envelope>`
+///   guarantees the account data is exactly `size_of::<Envelope>()` bytes and `Envelope: Pod`.
+/// - Raw `*const u64` reads from `data_ptr` are safe because the runtime serializes
+///   instruction data as a length-prefixed byte slice and the SDK enforces `size_of::<T>() <= ORACLE_BYTES`.
 pub(super) unsafe fn fast_path(input: *mut u8) -> u64 {
     let mut ctx = InstructionContext::new_unchecked(input);
     let num_accounts = ctx.remaining();
