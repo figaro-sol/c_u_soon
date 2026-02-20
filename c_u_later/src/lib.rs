@@ -1,4 +1,17 @@
 #![no_std]
+//! Permission mask and type-constraint system for c_u_soon oracle auxiliary data.
+//!
+//! A [`CuLaterMask`] describes which bytes of the 256-byte auxiliary buffer each
+//! caller (program or authority) may write. [`CuLater`] combines that mask with
+//! [`c_u_soon::TypeHash`], [`Pod`], and [`Zeroable`]. All four are required for a
+//! type to be valid oracle auxiliary data.
+//!
+//! Internally, masks are `[bool; AUX_SIZE]` where `true` = writable. The write protocol
+//! uses an inverted encoding: `0x00` = writable, `0xFF` = blocked.
+//!
+//! The `#[derive(CuLater)]` macro (from [`c_u_later_derive`]) generates both impls for
+//! a `#[repr(C)]` struct, annotating fields with `#[program]`, `#[authority]`, or
+//! `#[embed]` to control per-field write permissions.
 
 use core::marker::PhantomData;
 
@@ -23,6 +36,7 @@ impl BitVec256 {
     #[cfg(test)]
     pub(crate) const FULL: Self = BitVec256([0xFF; 32]);
 
+    /// Marks aux byte `bit` as writable. No-op if `bit >= 256`.
     #[inline]
     pub fn set_bit(&mut self, bit: usize) {
         if bit < 256 {
@@ -32,6 +46,7 @@ impl BitVec256 {
         }
     }
 
+    /// Returns `true` if aux byte `bit` is writable. Returns `false` if `bit >= 256`.
     #[inline]
     pub fn get_bit(&self, bit: usize) -> bool {
         if bit < 256 {
@@ -43,7 +58,8 @@ impl BitVec256 {
         }
     }
 
-    #[cfg(test)]
+    /// Returns `true` if every byte in `offset..offset+size` is writable.
+    /// Returns `false` if `offset + size > 256` or any byte in the range is blocked.
     #[inline]
     pub fn is_write_allowed(&self, offset: usize, size: usize) -> bool {
         (offset + size <= 256) && (offset..offset + size).all(|i| self.get_bit(i))
@@ -74,11 +90,30 @@ pub(crate) fn to_authority_bitvec<T: CuLaterMask>() -> BitVec256 {
     bools_to_bitvec(&T::authority_mask())
 }
 
+/// Describes byte-level write permissions over the 256-byte auxiliary data buffer.
+///
+/// Both methods return `[bool; AUX_SIZE]` where `true` means writable and `false` means
+/// blocked for that byte offset.
+///
+/// - `program_mask()`: bytes the delegated program may write.
+/// - `authority_mask()`: bytes the oracle authority may write.
+///
+/// Primitives and fixed-size arrays of `CuLaterMask` types have built-in impls (all
+/// bytes writable). Composite types derive this via `#[derive(CuLater)]`.
 pub trait CuLaterMask {
     fn program_mask() -> [bool; AUX_SIZE];
     fn authority_mask() -> [bool; AUX_SIZE];
 }
 
+/// Marker supertrait for a complete oracle auxiliary type.
+///
+/// Requires [`CuLaterMask`] + [`c_u_soon::TypeHash`] + [`Pod`] + [`Zeroable`]:
+/// - `CuLaterMask` enforces field-level write permissions.
+/// - `TypeHash` identifies the schema on-chain; a hash mismatch causes the oracle
+///   program to reject the instruction.
+/// - `Pod + Zeroable` permit safe byte-level reads and zero-initialization.
+///
+/// Blanket impl: any type with all four bounds implements `CuLater`.
 pub trait CuLater: CuLaterMask + c_u_soon::TypeHash + Pod + Zeroable {}
 
 impl<T: CuLaterMask + c_u_soon::TypeHash + Pod + Zeroable> CuLater for T {}

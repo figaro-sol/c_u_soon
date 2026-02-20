@@ -1,4 +1,13 @@
 #![no_std]
+//! Slow-path instruction types for the c_u_soon oracle program.
+//!
+//! [`SlowPathInstruction`] covers state-management operations: account creation and
+//! closure, delegation configuration, and auxiliary data writes. Fast-path oracle
+//! updates use a compact format handled directly by the program entry point and are
+//! not represented here.
+//!
+//! Serialized with `wincode`: a little-endian `u32` discriminant followed by variant
+//! fields. Discriminant tags are stable on-chain (see test `discriminant_stability`).
 
 extern crate alloc;
 
@@ -11,6 +20,29 @@ pub const UPDATE_AUX_SERIALIZED_SIZE: usize = 4 + 8 + AUX_DATA_SIZE;
 /// Wincode serialized size: 4 (disc) + 8 (auth_seq) + 8 (prog_seq) + 256 (data)
 pub const UPDATE_AUX_FORCE_SERIALIZED_SIZE: usize = 4 + 8 + 8 + AUX_DATA_SIZE;
 
+/// Instruction enum for slow-path operations on a c_u_soon oracle account.
+///
+/// Write mask encoding: `0x00` = writable, `0xFF` = blocked. Only canonical values
+/// (every byte is exactly `0x00` or `0xFF`) are accepted; [`validate`][Self::validate]
+/// rejects anything else.
+///
+/// # Variants
+///
+/// - `Create`: initializes the oracle PDA. `custom_seeds` (≤ `MAX_CUSTOM_SEEDS`, each ≤ 32 bytes)
+///   and `bump` identify the PDA address. `oracle_metadata` is the packed `StructMetadata`
+///   for the oracle's auxiliary type.
+/// - `Close`: deallocates the oracle account and returns lamports to the authority.
+///   Blocked while delegation is active.
+/// - `SetDelegatedProgram`: assigns write permissions to a delegated program.
+///   `program_bitmask` limits what the delegate can write; `user_bitmask` limits what
+///   the authority can write while delegation is in effect.
+/// - `ClearDelegation`: removes the delegated program and zeros the oracle state.
+/// - `UpdateAuxiliary`: authority writes the full aux buffer. `sequence` must match
+///   the oracle's current authority sequence counter.
+/// - `UpdateAuxiliaryDelegated`: delegated program writes aux data. `sequence` must
+///   match the oracle's current program sequence counter.
+/// - `UpdateAuxiliaryForce`: authority resets both sequence counters and writes aux
+///   data, bypassing the normal sequence check. Used to recover from desync.
 #[derive(Debug, Clone, SchemaWrite, SchemaRead)]
 pub enum SlowPathInstruction {
     #[wincode(tag = 0)]
@@ -47,6 +79,14 @@ pub enum SlowPathInstruction {
 }
 
 impl SlowPathInstruction {
+    /// Returns `false` if the instruction contains invalid fields.
+    ///
+    /// - `Create`: rejects if `custom_seeds.len() > MAX_CUSTOM_SEEDS` or any seed is > 32 bytes.
+    /// - `SetDelegatedProgram`: rejects if any byte in either bitmask is not `0x00` or `0xFF`.
+    /// - All other variants always return `true`.
+    ///
+    /// Account-level checks (signer authority, PDA derivation, sequence counters) are
+    /// not performed here; those happen in the program handler.
     pub fn validate(&self) -> bool {
         match self {
             SlowPathInstruction::Create { custom_seeds, .. } => {

@@ -1,13 +1,21 @@
+//! Off-chain validation utilities for [`CuLaterMask`] permission checks.
+//!
+//! [`validate_program_change`] and [`validate_authority_change`] verify that a proposed
+//! auxiliary data update stays within mask-defined write permissions. [`diff_report`]
+//! produces a per-byte breakdown for debugging rejected changes.
+//!
+//! This module requires the `alloc` feature (gated in `c_u_later/src/lib.rs`).
+//! On-chain enforcement uses the bitmask directly in the program handler.
+
 extern crate alloc;
 
 use crate::{BitVec256, CuLaterMask, AUX_SIZE};
 use alloc::vec::Vec;
 
-/// Validate that a change from old to new is permitted by the given mask.
+/// Returns `true` if every changed byte is permitted by `mask`.
 ///
-/// Returns true if all byte changes are either:
-/// 1. Allowed by the mask (mask.get_bit(i) == true), or
-/// 2. The byte didn't change (old[i] == new[i])
+/// A byte at index `i` may differ only if `mask.get_bit(i)` is `true`. Unchanged bytes
+/// are always allowed. Returns `false` if `old` and `new` have different lengths.
 #[inline]
 pub(crate) fn validate_change(old: &[u8], new: &[u8], mask: &BitVec256) -> bool {
     if old.len() != new.len() {
@@ -35,25 +43,36 @@ pub fn validate_authority_change<T: CuLaterMask>(old: &[u8], new: &[u8]) -> bool
     validate_change(old, new, &mask)
 }
 
-/// Record of a single byte change with permission information.
+/// A single byte that changed between old and new auxiliary data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ByteChange {
+    /// Index within the aux buffer (0..AUX_SIZE).
     pub byte_offset: usize,
+    /// Value before the change.
     pub old_value: u8,
+    /// Value after the change.
     pub new_value: u8,
+    /// `true` if the program mask permits writing this byte.
     pub program_allowed: bool,
+    /// `true` if the authority mask permits writing this byte.
     pub authority_allowed: bool,
 }
 
-/// Detailed report of all byte changes and validation results.
+/// Summary of all byte-level changes and their permission status.
 #[derive(Debug, Clone)]
 pub struct ChangeReport {
+    /// Each byte that differs between old and new data.
     pub changes: Vec<ByteChange>,
+    /// `true` if every changed byte is within the program write mask.
     pub all_program_changes_valid: bool,
+    /// `true` if every changed byte is within the authority write mask.
     pub all_authority_changes_valid: bool,
 }
 
-/// Generate a detailed change report comparing old and new auxiliary data.
+/// Produces a per-byte change report for debugging mask validation failures.
+///
+/// Only bytes where `old[i] != new[i]` appear in [`ChangeReport::changes`]. Each entry
+/// records whether the change is permitted by the program and authority masks.
 pub fn diff_report<T: CuLaterMask>(old: &[u8], new: &[u8]) -> ChangeReport {
     let program_mask = crate::to_program_bitvec::<T>();
     let authority_mask = crate::to_authority_bitvec::<T>();

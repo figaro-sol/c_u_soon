@@ -1,4 +1,8 @@
 #![no_std]
+//! CPI helpers for invoking the c_u_soon oracle program from another Solana program.
+//!
+//! Each function assembles the appropriate instruction data and account list, then
+//! calls [`pinocchio::cpi::invoke`].
 
 use c_u_soon::{AUX_DATA_SIZE, ORACLE_BYTES};
 use c_u_soon_instruction::{
@@ -14,6 +18,17 @@ use pinocchio::{
 const FAST_PATH_MAX: usize = 8 + 8 + ORACLE_BYTES; // 255
 
 /// CPI: fast path oracle update.
+///
+/// Sends the compact instruction format to the oracle program. Instruction data layout:
+/// `[oracle_meta: u64 LE | sequence: u64 LE | payload: ...]`
+///
+/// `payload` must be ≤ `ORACLE_BYTES` (239) bytes. The oracle program infers payload
+/// length from `instruction_data.len() - 16`.
+///
+/// Account order: `[authority (readonly signer), envelope (writable)]`
+///
+/// `authority` must match the oracle's registered authority. `program` is the oracle
+/// program (the CPI target).
 pub fn invoke_fast_path(
     authority: &AccountView,
     envelope: &AccountView,
@@ -44,6 +59,13 @@ pub fn invoke_fast_path(
 }
 
 /// CPI: UpdateAuxiliary (authority writes aux data).
+///
+/// Serializes [`SlowPathInstruction::UpdateAuxiliary`] and invokes the oracle program.
+///
+/// Account order: `[authority (readonly signer), envelope (writable), pda (readonly signer)]`
+///
+/// `pda` is the caller's PDA; the oracle program verifies it as a signer to confirm
+/// the call's origin.
 pub fn invoke_update_auxiliary(
     authority: &AccountView,
     envelope: &AccountView,
@@ -73,7 +95,14 @@ pub fn invoke_update_auxiliary(
     invoke(&ix, &[authority, envelope, pda])
 }
 
-/// CPI: UpdateAuxiliaryDelegated (delegation program writes aux data).
+/// CPI: UpdateAuxiliaryDelegated (delegated program writes aux data).
+///
+/// Serializes [`SlowPathInstruction::UpdateAuxiliaryDelegated`] and invokes the oracle program.
+///
+/// Account order: `[envelope (writable), delegation_auth (readonly signer), padding (readonly)]`
+///
+/// `delegation_auth` is the delegated program's authority; must sign. `padding` fills
+/// the third account slot and is not checked as a signer.
 pub fn invoke_update_auxiliary_delegated(
     envelope: &AccountView,
     delegation_auth: &AccountView,
@@ -103,7 +132,12 @@ pub fn invoke_update_auxiliary_delegated(
     invoke(&ix, &[delegation_auth, envelope, padding])
 }
 
-/// CPI: UpdateAuxiliaryForce (authority overrides both sequences).
+/// CPI: UpdateAuxiliaryForce (authority overrides both sequence counters).
+///
+/// Serializes [`SlowPathInstruction::UpdateAuxiliaryForce`] and invokes the oracle program.
+/// Use this when the authority and program sequences have drifted out of sync.
+///
+/// Account order: `[authority (readonly signer), envelope (writable), delegation_auth (readonly signer)]`
 pub fn invoke_update_auxiliary_force(
     authority: &AccountView,
     envelope: &AccountView,
