@@ -1,14 +1,33 @@
+//! Core types for the `c_u_soon` protocol.
+//!
+//! The on-chain primitive is an [`Envelope`] account (1120 bytes) with three regions:
+//! [`OracleState`] (written atomically by the fast path), delegation state with two
+//! [`Mask`]s (controlling auxiliary write access), and a 256-byte auxiliary data region
+//! (written by the slow path, validated against both masks on every update).
+//!
+//! # Type identity
+//!
+//! [`TypeHash`] and [`StructMetadata`] ensure typed reads ([`Envelope::oracle`],
+//! [`Envelope::aux`]) succeed only when the stored metadata matches the requested type.
+//! A mismatch returns `None` instead of a corrupt cast.
 #![no_std]
 
 use bytemuck::{Pod, Zeroable};
 use solana_address::Address;
 
+/// Byte size of an [`OracleState`] account region.
 pub const ORACLE_ACCOUNT_SIZE: usize = core::mem::size_of::<OracleState>();
 
-/// Max oracle data bytes. Fast path payload = [meta:8][seq:8][data:239] = 255 = u8::MAX.
+/// Usable oracle payload bytes.
+///
+/// Fast-path instruction data layout: `[meta:8][seq:8][data:239]` = 255 = `u8::MAX`.
+/// The 255-byte cap lets the fast path encode the copy length in a single byte.
 pub const ORACLE_BYTES: usize = 239;
 
+/// Byte size of the auxiliary data region and each [`Mask`].
 pub const AUX_DATA_SIZE: usize = 256;
+
+/// Number of bytes in a [`Mask`]: one control byte per auxiliary data byte.
 pub const MASK_SIZE: usize = 256;
 
 /// Packed type identity for on-chain data. bits\[63:56\] = size (u8), bits\[55:0\] = FNV-1a hash.
@@ -19,30 +38,39 @@ pub const MASK_SIZE: usize = 256;
 pub struct StructMetadata(u64);
 
 impl StructMetadata {
+    /// Zero metadata; indicates an uninitialized oracle or auxiliary slot.
+    /// `Envelope::oracle` and `Envelope::aux` return `None` when they see this.
     pub const ZERO: Self = Self(0);
 
+    /// Returns the raw packed `u64`.
     #[inline]
     pub const fn as_u64(&self) -> u64 {
         self.0
     }
 
+    /// Construct from a raw packed `u64`. Use only when deserializing a value that was
+    /// previously produced by [`StructMetadata::new`] or a `TypeHash` impl.
     #[inline]
     pub const fn from_raw(value: u64) -> Self {
         Self(value)
     }
 
+    /// Pack `type_size` (bits 63:56) and the low 56 bits of `hash_56` into one word.
     pub const fn new(type_size: u8, hash_56: u64) -> Self {
         Self(((type_size as u64) << 56) | (hash_56 & 0x00FF_FFFF_FFFF_FFFF))
     }
 
+    /// Extract the type size from bits 63:56.
     pub fn type_size(&self) -> u8 {
         (self.0 >> 56) as u8
     }
 
+    /// Extract the type hash from bits 55:0.
     pub fn hash_56(&self) -> u64 {
         self.0 & 0x00FF_FFFF_FFFF_FFFF
     }
 
+    /// Convenience alias for `T::METADATA`.
     pub fn of<T: TypeHash>() -> Self {
         T::METADATA
     }
@@ -84,8 +112,19 @@ pub const fn combine_hash(accumulated: u64, field_hash: u64) -> u64 {
 /// so structs with the same fields but different names produce different hashes.
 /// Primitives and `[T; N]` arrays have built-in impls.
 /// Derive with `#[derive(TypeHash)]` (requires `derive` feature).
+///
+/// # Hash mismatch
+///
+/// The on-chain metadata is written once when the oracle or auxiliary slot is initialized.
+/// If you request a type `T` whose `METADATA` differs from what was stored, [`Envelope::oracle`]
+/// and [`Envelope::aux`] return `None`. There is no runtime panic; callers must handle the
+/// `None` case.
 pub trait TypeHash: Pod + Zeroable {
+    /// FNV-1a hash of the type name, combined with ordered field hashes for structs.
+    /// Feeds into [`METADATA`](TypeHash::METADATA).
     const TYPE_HASH: u64;
+    /// Packed `(size, TYPE_HASH)` stored on-chain in `oracle_metadata` / `auxiliary_metadata`.
+    /// Compared against the stored value before any typed borrow is returned.
     const METADATA: StructMetadata;
 }
 
@@ -116,7 +155,14 @@ impl<T: TypeHash, const N: usize> TypeHash for [T; N] {
 #[cfg(feature = "derive")]
 pub use c_u_soon_derive::TypeHash;
 
+/// PDA seed discriminator for envelope accounts.
 pub const ENVELOPE_SEED: &[u8] = b"envelope";
+
+/// Maximum number of caller-supplied seeds in the PDA seed list.
+///
+/// Solana's `create_program_address` accepts at most 16 seeds total.
+/// Three are reserved by the protocol (`program_id`, `ENVELOPE_SEED`, `bump`),
+/// leaving 13 for caller use.
 pub const MAX_CUSTOM_SEEDS: usize = 13;
 
 /// Oracle data region (256 bytes). Layout: `[meta:8][seq:8][data:239][pad:1]`.
@@ -125,9 +171,15 @@ pub const MAX_CUSTOM_SEEDS: usize = 13;
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct OracleState {
+    /// Packed `(size, type_hash)` of the stored oracle type. Zero = uninitialized.
     pub oracle_metadata: StructMetadata, // 8   (Envelope[32..40])
+    /// Monotonically increasing write counter. The fast path rejects any update whose
+    /// incoming sequence is not strictly greater than the stored value (replay prevention).
     pub sequence: u64,
+    /// Raw oracle payload. Interpreted as `T` via [`Envelope::oracle`] when
+    /// `oracle_metadata == T::METADATA`.
     pub data: [u8; ORACLE_BYTES],
+    /// Alignment pad; not part of the protocol wire format.
     pub _pad: [u8; 1],
 }
 
@@ -162,13 +214,20 @@ pub struct Envelope {
 }
 
 impl Envelope {
+    /// Total byte size of an envelope account.
     pub const SIZE: usize = core::mem::size_of::<Self>();
 
+    /// Returns `true` if `delegation_authority` is non-zero (a delegated program is configured).
     #[inline]
     pub fn has_delegation(&self) -> bool {
         self.delegation_authority != Address::zeroed()
     }
 
+    /// Borrow the oracle region as `T`.
+    ///
+    /// Returns `None` if:
+    /// - `size_of::<T>() > ORACLE_BYTES` (type too large for the oracle region), or
+    /// - `oracle_metadata != T::METADATA` (stored type hash does not match `T`).
     pub fn oracle<T: TypeHash>(&self) -> Option<&T> {
         let size = core::mem::size_of::<T>();
         if size > ORACLE_BYTES {
@@ -180,6 +239,9 @@ impl Envelope {
         bytemuck::try_from_bytes(&self.oracle_state.data[..size]).ok()
     }
 
+    /// Mutably borrow the oracle region as `T`.
+    ///
+    /// Returns `None` under the same conditions as [`oracle`](Envelope::oracle).
     pub fn oracle_mut<T: TypeHash>(&mut self) -> Option<&mut T> {
         let size = core::mem::size_of::<T>();
         if size > ORACLE_BYTES {
@@ -191,6 +253,11 @@ impl Envelope {
         bytemuck::try_from_bytes_mut(&mut self.oracle_state.data[..size]).ok()
     }
 
+    /// Borrow the auxiliary data region as `T`.
+    ///
+    /// Returns `None` if:
+    /// - `size_of::<T>() > AUX_DATA_SIZE` (type too large for the auxiliary region), or
+    /// - `auxiliary_metadata != T::METADATA` (stored type hash does not match `T`).
     pub fn aux<T: TypeHash>(&self) -> Option<&T> {
         let size = core::mem::size_of::<T>();
         if size > AUX_DATA_SIZE {
@@ -202,6 +269,9 @@ impl Envelope {
         bytemuck::try_from_bytes(&self.auxiliary_data[..size]).ok()
     }
 
+    /// Mutably borrow the auxiliary data region as `T`.
+    ///
+    /// Returns `None` under the same conditions as [`aux`](Envelope::aux).
     pub fn aux_mut<T: TypeHash>(&mut self) -> Option<&mut T> {
         let size = core::mem::size_of::<T>();
         if size > AUX_DATA_SIZE {
@@ -258,11 +328,14 @@ impl Mask {
         self.0[byte_idx] == 0x00
     }
 
+    /// Raw mask bytes for inspection or serialization.
     #[inline]
     pub fn as_bytes(&self) -> &[u8; MASK_SIZE] {
         &self.0
     }
 
+    /// Raw mutable mask bytes. Caller must preserve the canonical polarity invariant:
+    /// every byte must be either `0x00` (writable) or `0xFF` (blocked).
     #[inline]
     pub fn as_bytes_mut(&mut self) -> &mut [u8; MASK_SIZE] {
         &mut self.0
@@ -274,6 +347,10 @@ impl Mask {
         self.0 == [0xFF; MASK_SIZE]
     }
 
+    /// Returns `true` if every byte in `[offset, offset + len)` is writable (`0x00`).
+    ///
+    /// Returns `true` for `len == 0`. Returns `false` if the range overflows or exceeds
+    /// [`AUX_DATA_SIZE`].
     #[inline]
     pub fn is_write_allowed(&self, offset: usize, len: usize) -> bool {
         if len == 0 {
