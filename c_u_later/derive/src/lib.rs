@@ -1,8 +1,68 @@
+//! Proc-macro crate that provides `#[derive(CuLater)]` for [`c_u_later`].
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Type};
 
+/// Derives [`c_u_later::CuLaterMask`] and [`c_u_soon::TypeHash`] for a `#[repr(C)]` struct.
+///
+/// # Field attributes
+///
+/// - `#[program]`: includes this field's bytes in `program_mask()`.
+/// - `#[authority]`: includes this field's bytes in `authority_mask()`.
+/// - `#[embed]` — for fields whose type does not implement `CuLaterMask`. Marks every byte
+///   of the field writable without sub-field granularity. The field type must be
+///   `Pod + Zeroable`. If the type implements `CuLater`, calling `program_mask()` or
+///   `authority_mask()` panics; remove `#[embed]` and let the type's own mask compose
+///   recursively instead.
+///
+/// Fields without any attribute are read-only from both callers' perspectives.
+///
+/// # Mask composition (without `#[embed]`)
+///
+/// For `#[program]` / `#[authority]` fields whose type implements `CuLaterMask`, the
+/// derive calls `FieldType::program_mask()` or `FieldType::authority_mask()` and splices
+/// the result into the parent mask at the field's byte offset. Primitive integer types
+/// and fixed-size arrays of `CuLaterMask` types have built-in impls (all bytes writable),
+/// so they work as field types without `#[embed]`.
+///
+/// # Generated items
+///
+/// - `impl CuLaterMask for MyStruct`: `program_mask()` and `authority_mask()` each return
+///   `[bool; AUX_SIZE]` where `true` = writable, `false` = blocked.
+/// - `impl TypeHash for MyStruct`: seeded with `"__struct_init__"` instead of the struct
+///   name, so the hash differs from a standalone `#[derive(TypeHash)]` on the same type.
+/// - A const assertion that `size_of::<MyStruct>() <= AUX_SIZE` (256 bytes).
+///
+/// # Requirements
+///
+/// - `#[repr(C)]` is required for deterministic field layout.
+/// - Only named-field structs are supported.
+/// - `#[program]` / `#[authority]` fields without `#[embed]` must implement `CuLaterMask`.
+/// - `#[embed]` field types must be `Pod + Zeroable`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use bytemuck::{Pod, Zeroable};
+/// use c_u_later::CuLater;
+///
+/// #[derive(Clone, Copy, Pod, Zeroable, CuLater)]
+/// #[repr(C)]
+/// struct OracleSlot {
+///     readonly_header: u32,
+///     #[program]
+///     counter: u32,
+///     #[authority]
+///     config: u32,
+///     #[program]
+///     #[authority]
+///     shared: u32,
+/// }
+/// // program_mask():   bytes 4-7 and 12-15 are writable
+/// // authority_mask(): bytes 8-11 and 12-15 are writable
+/// ```
 #[proc_macro_derive(CuLater, attributes(program, authority, embed))]
 pub fn derive_cu_later(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

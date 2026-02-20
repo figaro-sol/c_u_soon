@@ -1,8 +1,52 @@
+//! Proc-macro crate that provides `#[derive(TypeHash)]` for [`c_u_soon`].
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields};
 
+/// Derives [`c_u_soon::TypeHash`] for a `#[repr(C)]` struct with named fields.
+///
+/// # Generated code
+///
+/// ```ignore
+/// impl c_u_soon::TypeHash for MyStruct {
+///     const TYPE_HASH: u64 = /* fnv1a(name) folded with each field's TYPE_HASH */;
+///     const METADATA: c_u_soon::StructMetadata = /* packed (size_of::<Self>() as u8, TYPE_HASH) */;
+/// }
+/// ```
+///
+/// # Hash formula
+///
+/// ```text
+/// hash = fnv1a("MyStruct")
+/// for each field in declaration order:
+///     hash = combine_hash(hash, FieldType::TYPE_HASH)
+/// ```
+///
+/// Both the struct name and field order affect the hash. Renaming or reordering fields
+/// changes the identity and will cause any stored oracle metadata to be rejected.
+///
+/// # Requirements
+///
+/// - `#[repr(C)]` is required for deterministic field layout.
+/// - Only named-field structs are supported (no tuple structs, no enums).
+/// - `size_of::<Self>()` must be ≤ 255; the derive emits a compile-time assertion.
+/// - Each field type must implement `TypeHash`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use bytemuck::{Pod, Zeroable};
+/// use c_u_soon::TypeHash;
+///
+/// #[derive(Clone, Copy, Pod, Zeroable, TypeHash)]
+/// #[repr(C)]
+/// struct Position {
+///     x: f32,
+///     y: f32,
+/// }
+/// ```
 #[proc_macro_derive(TypeHash)]
 pub fn derive_type_hash(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
