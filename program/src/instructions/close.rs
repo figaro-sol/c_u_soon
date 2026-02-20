@@ -1,6 +1,15 @@
 use c_u_soon::Envelope;
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
+/// Deallocate an oracle PDA and return its lamports to a recipient.
+///
+/// Accounts: `[authority (signer), envelope_account, recipient]`.
+///
+/// Requires no active delegation (`!envelope.has_delegation()`); close is blocked while a
+/// delegated program may still hold references. Zero-fills account data before deallocation
+/// to clear oracle state from on-chain storage. `recipient` must differ from `envelope_account`.
+/// Transfers all lamports to `recipient`, resizes the account to 0, and reassigns ownership to
+/// the system program.
 pub fn process(program_id: &Address, accounts: &[AccountView]) -> ProgramResult {
     let [authority, envelope_account, recipient] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);

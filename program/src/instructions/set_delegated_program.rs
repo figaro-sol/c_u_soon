@@ -2,6 +2,18 @@ use bytemuck::Zeroable;
 use c_u_soon::{Envelope, Mask};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
+/// Assign a delegated program and write-access bitmasks to an oracle envelope.
+///
+/// Accounts: `[authority (signer), envelope_account, delegation_authority (signer)]`.
+///
+/// Requires no active delegation (`envelope.delegation_authority == zeroed`); both bitmasks
+/// must already be `ALL_BLOCKED`. This prevents overwriting an existing delegation without
+/// going through [`clear_delegation`] first.
+/// `delegation_authority` must be non-zero and must sign the transaction.
+///
+/// Sets `envelope.delegation_authority`, `program_bitmask`, and `user_bitmask`.
+///
+/// [`clear_delegation`]: super::clear_delegation::process
 pub fn process(
     program_id: &Address,
     accounts: &[AccountView],

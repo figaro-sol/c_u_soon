@@ -1,5 +1,13 @@
 use pinocchio::{error::ProgramError, Address};
 
+/// Compute a program-derived address from `seeds` and `program_id`.
+///
+/// Returns [`ProgramError::InvalidSeeds`] if the seeds do not produce a valid off-curve address.
+///
+/// Platform dispatch:
+/// - On `target_os = "solana"` / `target_arch = "bpf"`: calls `Address::create_program_address`.
+/// - In non-BPF tests: delegates to `solana_sdk::pubkey::Pubkey::create_program_address`.
+/// - Non-BPF, non-test: panics (`unimplemented!`).
 #[cfg(any(target_os = "solana", target_arch = "bpf"))]
 pub fn create_program_address(
     seeds: &[&[u8]],

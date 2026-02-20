@@ -3,6 +3,16 @@ use bytemuck::Zeroable;
 use c_u_soon::{Envelope, AUX_DATA_SIZE};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
+/// Reset both sequence counters and overwrite auxiliary data, requiring both signers.
+///
+/// Accounts: `[authority (signer), envelope_account, delegation_authority (signer)]`.
+///
+/// Requires an active delegation. Both `authority` and `delegation_authority` must sign.
+/// `authority_sequence` must exceed `envelope.authority_aux_sequence` and `program_sequence`
+/// must exceed `envelope.program_aux_sequence` (both still monotonic).
+///
+/// Overwrites `auxiliary_data` in full without bitmask enforcement and sets both sequence
+/// counters simultaneously. Use when the two counters have drifted out of sync.
 pub fn process(
     program_id: &Address,
     accounts: &[AccountView],

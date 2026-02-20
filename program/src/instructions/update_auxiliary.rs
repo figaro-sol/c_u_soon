@@ -1,6 +1,17 @@
 use c_u_soon::{Envelope, AUX_DATA_SIZE};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
+/// Write auxiliary data as the oracle authority.
+///
+/// Accounts: `[authority (signer), envelope_account, pda_account]`.
+///
+/// `sequence` must be strictly greater than `envelope.authority_aux_sequence` (monotonic).
+///
+/// When delegation is active, `pda_account` is ignored and `user_bitmask` gates which bytes of
+/// `auxiliary_data` may be written (`0x00` = writable, `0xFF` = blocked). Returns
+/// [`ProgramError::InvalidArgument`] if any blocked byte differs from the current value.
+///
+/// When delegation is inactive, `pda_account` must sign and the full `auxiliary_data` is overwritten.
 pub fn process(
     program_id: &Address,
     accounts: &[AccountView],

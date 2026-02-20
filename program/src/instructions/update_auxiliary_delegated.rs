@@ -3,6 +3,17 @@ use bytemuck::Zeroable;
 use c_u_soon::{Envelope, AUX_DATA_SIZE};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
+/// Write auxiliary data as the delegated program.
+///
+/// Accounts: `[envelope_account, delegation_authority (signer), _padding]`.
+///
+/// Requires an active delegation. `delegation_authority` must sign and match
+/// `envelope.delegation_authority`. `sequence` must be strictly greater than
+/// `envelope.program_aux_sequence`. The authority account is absent; only the delegated
+/// program signs.
+///
+/// `program_bitmask` gates which bytes of `auxiliary_data` may be written (`0x00` = writable,
+/// `0xFF` = blocked). Returns [`ProgramError::InvalidArgument`] if any blocked byte differs.
 pub fn process(
     program_id: &Address,
     accounts: &[AccountView],

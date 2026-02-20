@@ -10,6 +10,22 @@ use pinocchio::{
 };
 use pinocchio_system::instructions::{Allocate, Assign, Transfer};
 
+/// Initialize an oracle PDA account.
+///
+/// Accounts (minimum 3): `[authority (signer), envelope_account, system_program_account, ...]`.
+///
+/// PDA seeds: `[ENVELOPE_SEED, authority_address, ...custom_seeds, bump]`. The computed address
+/// must match `envelope_account`; otherwise returns [`ProgramError::InvalidSeeds`].
+///
+/// Idempotent: if the envelope is already owned by this program with matching `authority`, `bump`,
+/// and `oracle_metadata`, returns `Ok(())` without touching the account.
+///
+/// For a new account the CPI sequence is:
+/// 1. `Transfer`: top up lamports to the rent-exempt minimum if needed.
+/// 2. `Allocate`: set account data length to `size_of::<Envelope>()`.
+/// 3. `Assign`: transfer ownership to this program.
+///
+/// Initializes `authority`, `bump`, and `oracle_metadata`. Both bitmasks start as `ALL_BLOCKED`.
 pub fn process(
     program_id: &Address,
     accounts: &[AccountView],
