@@ -7,7 +7,7 @@ pub fn process(
     sequence: u64,
     data: &[u8; AUX_DATA_SIZE],
 ) -> ProgramResult {
-    let [authority, envelope_account, pda_account] = accounts else {
+    let [authority, envelope_account, _padding] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
@@ -30,20 +30,15 @@ pub fn process(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    if envelope.has_delegation() {
-        // pda_account is unused when delegated — bitmask enforces access control instead
-        if !envelope
-            .user_bitmask
-            .apply_masked_update(&mut envelope.auxiliary_data, data)
-        {
-            return Err(ProgramError::InvalidArgument);
-        }
-    } else {
-        // When there is no delegation, require PDA account to sign
-        if !pda_account.is_signer() {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
-        envelope.auxiliary_data = *data;
+    if !envelope.has_delegation() {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    if !envelope
+        .user_bitmask
+        .apply_masked_update(&mut envelope.auxiliary_data, data)
+    {
+        return Err(ProgramError::InvalidArgument);
     }
 
     envelope.authority_aux_sequence = sequence;

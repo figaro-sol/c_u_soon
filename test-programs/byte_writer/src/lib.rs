@@ -9,7 +9,7 @@ use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 ///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=c_u_soon_program
 ///
 /// 0x01: UpdateViaSlowPath   [seq: u64 LE][aux_data: 256 bytes]
-///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=pda_account(signer), [3]=c_u_soon_program
+///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=padding, [3]=c_u_soon_program
 ///
 /// 0x02: UpdateViaDelegated  [seq: u64 LE][aux_data: 256 bytes]
 ///   Accounts: [0]=envelope(writable), [1]=delegation_auth(signer), [2]=padding, [3]=c_u_soon_program

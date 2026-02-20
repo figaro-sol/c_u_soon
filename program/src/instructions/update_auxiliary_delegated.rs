@@ -9,7 +9,7 @@ pub fn process(
     sequence: u64,
     data: &[u8; AUX_DATA_SIZE],
 ) -> ProgramResult {
-    let [envelope_account, delegation_authority, _padding] = accounts else {
+    let [delegation_authority, envelope_account, _padding] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 

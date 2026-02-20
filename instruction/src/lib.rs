@@ -6,6 +6,11 @@ use alloc::vec::Vec;
 use c_u_soon::{AUX_DATA_SIZE, MASK_SIZE, MAX_CUSTOM_SEEDS};
 use wincode::{SchemaRead, SchemaWrite};
 
+/// Wincode serialized size: 4 (disc) + 8 (seq) + 256 (data)
+pub const UPDATE_AUX_SERIALIZED_SIZE: usize = 4 + 8 + AUX_DATA_SIZE;
+/// Wincode serialized size: 4 (disc) + 8 (auth_seq) + 8 (prog_seq) + 256 (data)
+pub const UPDATE_AUX_FORCE_SERIALIZED_SIZE: usize = 4 + 8 + 8 + AUX_DATA_SIZE;
+
 #[derive(Debug, Clone, SchemaWrite, SchemaRead)]
 pub enum SlowPathInstruction {
     #[wincode(tag = 0)]
@@ -70,6 +75,32 @@ impl SlowPathInstruction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serialized_size_constants_match() {
+        let aux = wincode::serialize(&SlowPathInstruction::UpdateAuxiliary {
+            sequence: 0,
+            data: [0; AUX_DATA_SIZE],
+        })
+        .unwrap();
+        assert_eq!(
+            aux.len(),
+            UPDATE_AUX_SERIALIZED_SIZE,
+            "UPDATE_AUX_SERIALIZED_SIZE mismatch"
+        );
+
+        let force = wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryForce {
+            authority_sequence: 0,
+            program_sequence: 0,
+            data: [0; AUX_DATA_SIZE],
+        })
+        .unwrap();
+        assert_eq!(
+            force.len(),
+            UPDATE_AUX_FORCE_SERIALIZED_SIZE,
+            "UPDATE_AUX_FORCE_SERIALIZED_SIZE mismatch"
+        );
+    }
 
     #[test]
     fn discriminant_stability() {
@@ -187,6 +218,89 @@ mod tests {
         match deserialized {
             SlowPathInstruction::UpdateAuxiliary { sequence, data: d } => {
                 assert_eq!(sequence, 7);
+                assert_eq!(d, data);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_wincode_roundtrip_close() {
+        let ix = SlowPathInstruction::Close;
+        let serialized = wincode::serialize(&ix).unwrap();
+        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
+        assert!(matches!(deserialized, SlowPathInstruction::Close));
+    }
+
+    #[test]
+    fn test_wincode_roundtrip_set_delegated_program() {
+        let mut program_bitmask = [0x00u8; MASK_SIZE];
+        program_bitmask[0] = 0xFF;
+        program_bitmask[127] = 0xFF;
+        let user_bitmask = [0xFF; MASK_SIZE];
+
+        let ix = SlowPathInstruction::SetDelegatedProgram {
+            program_bitmask,
+            user_bitmask,
+        };
+        let serialized = wincode::serialize(&ix).unwrap();
+        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
+        match deserialized {
+            SlowPathInstruction::SetDelegatedProgram {
+                program_bitmask: pb,
+                user_bitmask: ub,
+            } => {
+                assert_eq!(pb, program_bitmask);
+                assert_eq!(ub, user_bitmask);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_wincode_roundtrip_clear_delegation() {
+        let ix = SlowPathInstruction::ClearDelegation;
+        let serialized = wincode::serialize(&ix).unwrap();
+        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
+        assert!(matches!(deserialized, SlowPathInstruction::ClearDelegation));
+    }
+
+    #[test]
+    fn test_wincode_roundtrip_update_auxiliary_delegated() {
+        let data = [0xBBu8; AUX_DATA_SIZE];
+        let ix = SlowPathInstruction::UpdateAuxiliaryDelegated {
+            sequence: 99,
+            data,
+        };
+        let serialized = wincode::serialize(&ix).unwrap();
+        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
+        match deserialized {
+            SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data: d } => {
+                assert_eq!(sequence, 99);
+                assert_eq!(d, data);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_wincode_roundtrip_update_auxiliary_force() {
+        let data = [0xCCu8; AUX_DATA_SIZE];
+        let ix = SlowPathInstruction::UpdateAuxiliaryForce {
+            authority_sequence: 10,
+            program_sequence: 20,
+            data,
+        };
+        let serialized = wincode::serialize(&ix).unwrap();
+        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
+        match deserialized {
+            SlowPathInstruction::UpdateAuxiliaryForce {
+                authority_sequence,
+                program_sequence,
+                data: d,
+            } => {
+                assert_eq!(authority_sequence, 10);
+                assert_eq!(program_sequence, 20);
                 assert_eq!(d, data);
             }
             _ => panic!("Wrong variant"),

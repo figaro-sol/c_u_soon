@@ -19,12 +19,12 @@ use pinocchio::{
 ///   Attack: passes wrong authority (different from envelope.authority) → c_u_soon rejects IncorrectAuthority
 ///
 /// 0x02: WrongDelegationAuthority [seq: u64 LE][aux_data: 256 bytes]
-///   Accounts: [0]=envelope(writable), [1]=wrong_delegation(signer), [2]=padding, [3]=c_u_soon_program
+///   Accounts: [0]=wrong_delegation(signer), [1]=envelope(writable), [2]=padding, [3]=c_u_soon_program
 ///   Attack: wrong delegation_authority → c_u_soon rejects IncorrectAuthority
 ///
 /// 0x03: SlowPathWithoutPdaSigner [seq: u64 LE][aux_data: 256 bytes]
-///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=pda_account(NOT signer), [3]=c_u_soon_program
-///   Attack: pda_account not signer when no delegation → c_u_soon rejects MissingRequiredSignature
+///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=padding(NOT signer), [3]=c_u_soon_program
+///   Attack: UpdateAuxiliary without delegation → c_u_soon rejects InvalidArgument
 ///
 /// 0x04: StaleSequence [oracle_meta: u64 LE][seq: u64 LE][payload_len: u8][payload bytes]
 ///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=c_u_soon_program
@@ -181,8 +181,8 @@ fn wrong_delegation_authority(
     ix_data[12..268].copy_from_slice(&aux_data[..256]);
 
     let cpi_accounts = [
-        InstructionAccount::writable(accounts[0].address()),         // envelope, writable
-        InstructionAccount::readonly_signer(accounts[1].address()),  // wrong delegation, signer
+        InstructionAccount::readonly_signer(accounts[0].address()),  // wrong delegation, signer
+        InstructionAccount::writable(accounts[1].address()),         // envelope, writable
         InstructionAccount::readonly(accounts[2].address()),         // padding
     ];
     let instruction = InstructionView {
@@ -193,7 +193,7 @@ fn wrong_delegation_authority(
     invoke(&instruction, &[&accounts[0], &accounts[1], &accounts[2]])
 }
 
-/// ATTACK: UpdateAuxiliary (no delegation) with pda_account NOT a signer.
+/// ATTACK: UpdateAuxiliary without delegation.
 fn slow_path_without_pda_signer(
     accounts: &[AccountView],
     sequence: u64,
@@ -207,11 +207,11 @@ fn slow_path_without_pda_signer(
     ix_data[4..12].copy_from_slice(&sequence.to_le_bytes());
     ix_data[12..268].copy_from_slice(&aux_data[..256]);
 
-    // Attack: mark pda_account as NOT signer
+    // Attack: UpdateAuxiliary on envelope without delegation
     let cpi_accounts = [
         InstructionAccount::readonly_signer(accounts[0].address()),  // authority, signer
         InstructionAccount::writable(accounts[1].address()),          // envelope, writable
-        InstructionAccount::readonly(accounts[2].address()),          // pda_account, NOT signer
+        InstructionAccount::readonly(accounts[2].address()),          // padding
     ];
     let instruction = InstructionView {
         program_id: accounts[3].address(),

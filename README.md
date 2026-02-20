@@ -129,7 +129,7 @@ let user_mask = to_authority_wire_mask::<AmmState>();
 For opaque blob fields that don't implement `CuLater`, use `#[embed]`:
 
 ```rust
-#[derive(Clone, Copy, Pod, Zeroable, CuLater)]
+#[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater)]
 #[repr(C)]
 struct WithBlob {
     #[program]
@@ -155,7 +155,7 @@ Update slow data as the authority:
 ```rust
 use c_u_soon_cpi::invoke_update_auxiliary;
 
-invoke_update_auxiliary(authority, envelope, pda, c_u_soon_program, next_sequence, &new_data)?;
+invoke_update_auxiliary(authority, envelope, padding, c_u_soon_program, next_sequence, &new_data)?;
 ```
 
 Force update (both parties sign, no bitmask restriction):
@@ -202,20 +202,20 @@ Fast path is also available via CPI (`c_u_soon_cpi::invoke_fast_path`).
 | envelope             | writable, owned |
 | delegation_authority | signer          |
 
-**UpdateAuxiliary**: authority writes slow data. When no delegation exists, pda_account must sign. When delegated, pda_account is not checked but writes are restricted by user_bitmask.
+**UpdateAuxiliary**: authority writes slow data. Requires active delegation. Writes restricted by user_bitmask.
 
-| Account     | Constraints                          |
-|-------------|--------------------------------------|
-| authority   | signer                               |
-| envelope    | writable, owned                      |
-| pda_account | signer required only if not delegated |
+| Account     | Constraints     |
+|-------------|-----------------|
+| authority   | signer          |
+| envelope    | writable, owned |
+| (padding)   |                 |
 
 **UpdateAuxiliaryDelegated**: delegated program writes slow data. Requires active delegation. Writes restricted by program_bitmask. Sequence must be strictly greater than program_aux_sequence.
 
 | Account              | Constraints     |
 |----------------------|-----------------|
-| envelope             | writable, owned |
 | delegation_authority | signer          |
+| envelope             | writable, owned |
 | (padding)            |                 |
 
 **UpdateAuxiliaryForce**: both parties sign, no bitmask restriction. Requires active delegation. Both authority_sequence and program_sequence must be strictly greater than their stored values.

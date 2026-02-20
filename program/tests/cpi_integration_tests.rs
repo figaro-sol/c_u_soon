@@ -482,7 +482,7 @@ mod litesvm_tests {
         );
     }
 
-    /// Attack: UpdateAuxiliary without PDA signer when no delegation → c_u_soon rejects
+    /// Attack: UpdateAuxiliary on envelope without delegation → c_u_soon rejects (InvalidArgument)
     #[test]
     fn test_cpi_attack_slow_path_without_pda_signer() {
         let mut svm = setup_svm();
@@ -491,13 +491,13 @@ mod litesvm_tests {
 
         let authority_kp = Keypair::new();
         let authority_addr = authority_kp.pubkey();
-        let fake_pda = Keypair::new();
+        let padding_kp = Keypair::new();
         let envelope_addr = Address::new_unique();
 
         svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
         svm.set_account(envelope_addr, make_envelope(&authority_addr, 0))
             .unwrap();
-        svm.set_account(fake_pda.pubkey(), create_funded_account(0))
+        svm.set_account(padding_kp.pubkey(), create_funded_account(0))
             .unwrap();
 
         let aux_data = [0u8; 256];
@@ -506,9 +506,9 @@ mod litesvm_tests {
             ATTACKER_PROBE_ID,
             &ix_data,
             vec![
-                AccountMeta::new_readonly(authority_addr, true), // [0] authority, signer
-                AccountMeta::new(envelope_addr, false),          // [1] envelope, writable
-                AccountMeta::new_readonly(fake_pda.pubkey(), false), // [2] pda, NOT signer
+                AccountMeta::new_readonly(authority_addr, true),      // [0] authority, signer
+                AccountMeta::new(envelope_addr, false),               // [1] envelope, writable
+                AccountMeta::new_readonly(padding_kp.pubkey(), false), // [2] padding
                 AccountMeta::new_readonly(PROGRAM_ID, false),    // [3] c_u_soon
             ],
         );
@@ -520,15 +520,15 @@ mod litesvm_tests {
             svm.latest_blockhash(),
         );
 
-        // c_u_soon sees pda_account.is_signer() = false → MissingRequiredSignature
+        // UpdateAuxiliary requires delegation; envelope has none → InvalidArgument
         let result = svm.send_transaction(tx);
         assert!(
             result.is_err(),
-            "Attack without PDA signer should be rejected"
+            "UpdateAuxiliary without delegation should be rejected"
         );
     }
 
-    /// CPI via byte_writer 0x01: UpdateAuxiliary (authority writes slow data, no delegation)
+    /// CPI via byte_writer 0x01: UpdateAuxiliary (authority writes slow data, delegation required)
     #[test]
     fn test_cpi_slow_path_via_byte_writer() {
         let mut svm = setup_svm();
@@ -537,13 +537,23 @@ mod litesvm_tests {
 
         let authority_kp = Keypair::new();
         let authority_addr = authority_kp.pubkey();
+        let delegation_kp = Keypair::new();
+        let delegation_addr = delegation_kp.pubkey();
         let pda_kp = Keypair::new();
         let pda_addr = pda_kp.pubkey();
         let envelope_addr = Address::new_unique();
 
         svm.airdrop(&authority_addr, 1_000_000_000).unwrap();
-        svm.set_account(envelope_addr, make_envelope(&authority_addr, 0))
-            .unwrap();
+        svm.set_account(
+            envelope_addr,
+            make_delegated_envelope(
+                &authority_addr,
+                &delegation_addr,
+                Mask::ALL_BLOCKED,
+                Mask::ALL_WRITABLE,
+            ),
+        )
+        .unwrap();
         svm.set_account(pda_addr, create_funded_account(0)).unwrap();
 
         let mut aux_data = [0u8; 256];
@@ -734,8 +744,8 @@ mod litesvm_tests {
             ATTACKER_PROBE_ID,
             &ix_data,
             vec![
-                AccountMeta::new(envelope_addr, false), // [0] envelope
-                AccountMeta::new_readonly(wrong_delegation_addr, true), // [1] wrong delegation, signer
+                AccountMeta::new_readonly(wrong_delegation_addr, true), // [0] wrong delegation, signer
+                AccountMeta::new(envelope_addr, false),                 // [1] envelope
                 AccountMeta::new_readonly(padding_addr, false),         // [2] padding
                 AccountMeta::new_readonly(PROGRAM_ID, false),           // [3] c_u_soon
             ],

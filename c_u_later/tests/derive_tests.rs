@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use c_u_later::{CuLater, CuLaterMask, IsCuLaterWrapper, IsNotCuLater};
 use c_u_soon::TypeHash;
 
-#[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug, PartialEq)]
+#[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug, PartialEq)]
 #[repr(C)]
 struct Simple {
     readonly: u32,
@@ -39,7 +39,7 @@ fn test_simple_struct_masks() {
 
 #[test]
 fn test_array_field() {
-    #[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
     #[repr(C)]
     struct WithArray {
         header: u32,
@@ -63,7 +63,7 @@ fn test_array_field() {
     }
 }
 
-#[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+#[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
 #[repr(C)]
 struct Inner {
     #[program]
@@ -72,7 +72,7 @@ struct Inner {
     auth_field: u16,
 }
 
-#[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+#[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
 #[repr(C)]
 struct Outer {
     header: u32,
@@ -191,7 +191,7 @@ fn test_nested_struct_composition() {
 fn detects_is_cu_later() {
     struct NotCuLater;
 
-    #[derive(Pod, Zeroable, CuLater, Clone, Copy)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Clone, Copy)]
     #[repr(C)]
     struct IsCuLater {
         x: u8,
@@ -210,7 +210,7 @@ fn embed_non_cu_later_type() {
         denominator: u16,
     }
 
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct WithEmbed {
         #[program]
@@ -237,7 +237,7 @@ fn embed_array_of_non_cu_later() {
         denominator: u16,
     }
 
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct WithEmbedArray {
         #[authority]
@@ -253,7 +253,7 @@ fn embed_array_of_non_cu_later() {
 
 #[test]
 fn test_repr_c_with_align() {
-    #[derive(Clone, Copy, Pod, Zeroable, CuLater)]
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater)]
     #[repr(C, align(8))]
     struct Aligned {
         #[program]
@@ -294,14 +294,14 @@ fn test_repr_c_with_align() {
 #[test]
 #[should_panic(expected = "implements CuLater")]
 fn embed_rejects_cu_later_type() {
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct InnerCuLater {
         #[program]
         x: u8,
     }
 
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct OuterWithBadEmbed {
         #[program]
@@ -315,14 +315,14 @@ fn embed_rejects_cu_later_type() {
 #[test]
 #[should_panic(expected = "implements CuLater")]
 fn embed_rejects_array_of_cu_later() {
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct InnerCuLater {
         #[program]
         x: u8,
     }
 
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct OuterWithBadArrayEmbed {
         #[program]
@@ -335,7 +335,7 @@ fn embed_rejects_array_of_cu_later() {
 
 #[test]
 fn test_inter_field_padding() {
-    #[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
     #[repr(C)]
     struct InterFieldPad {
         #[program]
@@ -374,7 +374,7 @@ fn test_inter_field_padding() {
 
 #[test]
 fn test_tail_padding() {
-    #[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
     #[repr(C)]
     struct TailPad {
         #[program]
@@ -433,7 +433,7 @@ fn test_tail_padding() {
     }
 }
 
-#[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+#[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
 #[repr(C)]
 struct InnerPadded {
     #[program]
@@ -459,7 +459,7 @@ fn test_nested_struct_with_internal_padding() {
     assert!(inner_mask[2], "inner byte 2 (y low) should be writable");
     assert!(inner_mask[3], "inner byte 3 (y high) should be writable");
 
-    #[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
     #[repr(C)]
     struct OuterWithPaddedInner {
         header: u32,
@@ -488,7 +488,7 @@ fn test_nested_struct_with_internal_padding() {
 
 #[test]
 fn test_repeated_padded_structs() {
-    #[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
     #[repr(C)]
     struct WithPaddedArray {
         #[program]
@@ -554,7 +554,7 @@ fn test_nested_arrays() {
 
 #[test]
 fn test_128_byte_struct() {
-    #[derive(Clone, Copy, Pod, Zeroable, CuLater, Debug)]
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
     #[repr(C)]
     struct Boundary128 {
         #[program]
@@ -652,7 +652,7 @@ fn embed_with_program_and_authority() {
         b: u16,
     }
 
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct WithFullEmbed {
         #[program]
@@ -686,14 +686,14 @@ fn embed_with_program_and_authority() {
 #[test]
 #[should_panic(expected = "implements CuLater")]
 fn embed_rejects_cu_later_type_via_authority() {
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct InnerCuLater {
         #[program]
         x: u8,
     }
 
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct OuterWithBadEmbed {
         #[authority]
@@ -721,10 +721,11 @@ fn cu_later_derive_generates_type_hash() {
 fn cu_later_type_hash_matches_standalone_derive() {
     use c_u_soon::{combine_hash, const_fnv1a, TypeHash};
     // Simple has fields: readonly: u32, both: u16, program_only: u8, authority_only: u8
+    // TypeHash derive uses struct name as seed
     let expected = combine_hash(
         combine_hash(
             combine_hash(
-                combine_hash(const_fnv1a(b"__struct_init__"), u32::TYPE_HASH),
+                combine_hash(const_fnv1a(b"Simple"), u32::TYPE_HASH),
                 u16::TYPE_HASH,
             ),
             u8::TYPE_HASH,
@@ -780,7 +781,7 @@ fn wire_mask_authority() {
 
 #[test]
 fn wire_mask_big_struct_allowed() {
-    #[derive(Pod, Zeroable, CuLater, Copy, Clone)]
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
     #[repr(C)]
     struct Big {
         #[program]

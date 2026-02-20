@@ -137,18 +137,6 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect();
 
-    // TypeHash: fold field type hashes left-to-right
-    let mut type_hash_expr: TokenStream2 = quote! { ::c_u_soon::const_fnv1a(b"__struct_init__") };
-    for f in &field_infos {
-        let field_ty = &f.ty;
-        type_hash_expr = quote! {
-            ::c_u_soon::combine_hash(
-                #type_hash_expr,
-                <#field_ty as ::c_u_soon::TypeHash>::TYPE_HASH,
-            )
-        };
-    }
-
     let name_snake = to_snake_case(&name.to_string());
     let program_mask_fn = format_ident!("__cu_later_program_mask_{}", name_snake);
     let authority_mask_fn = format_ident!("__cu_later_authority_mask_{}", name_snake);
@@ -185,14 +173,6 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
             fn authority_mask() -> [bool; ::c_u_later::AUX_SIZE] {
                 #authority_mask_fn()
             }
-        }
-
-        impl ::c_u_soon::TypeHash for #name {
-            const TYPE_HASH: u64 = #type_hash_expr;
-            const METADATA: ::c_u_soon::StructMetadata = ::c_u_soon::StructMetadata::new(
-                ::core::mem::size_of::<Self>() as u8,
-                Self::TYPE_HASH,
-            );
         }
     };
 

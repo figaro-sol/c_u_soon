@@ -20,6 +20,7 @@ pub(crate) struct BitVec256([u8; 32]);
 
 impl BitVec256 {
     pub(crate) const ZERO: Self = BitVec256([0; 32]);
+    #[cfg(test)]
     pub(crate) const FULL: Self = BitVec256([0xFF; 32]);
 
     #[inline]
@@ -42,6 +43,7 @@ impl BitVec256 {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub fn is_write_allowed(&self, offset: usize, size: usize) -> bool {
         (offset + size <= 256) && (offset..offset + size).all(|i| self.get_bit(i))

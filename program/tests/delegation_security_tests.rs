@@ -229,8 +229,8 @@ fn test_update_auxiliary_delegated_happy_path() {
         PROGRAM_ID,
         &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
         vec![
-            AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_authority, true),
+            AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(padding, false),
         ],
     );
@@ -238,15 +238,15 @@ fn test_update_auxiliary_delegated_happy_path() {
     let result = mollusk.process_and_validate_instruction(
         &instruction,
         &[
-            (envelope_pubkey, envelope),
             (delegation_authority, create_funded_account(0)),
+            (envelope_pubkey, envelope),
             (padding, create_funded_account(0)),
         ],
         &[Check::success()],
     );
 
     let env: &Envelope = bytemuck::from_bytes(
-        &result.resulting_accounts[0].1.data[..core::mem::size_of::<Envelope>()],
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
     );
     assert_eq!(env.auxiliary_data[0], 0xCC);
     assert_eq!(env.auxiliary_data[50], 0xDD);
@@ -340,13 +340,18 @@ fn test_sequence_monotonically_increases() {
     let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
+    let delegation_auth = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
     let pda = Address::new_unique();
 
-    // Create envelope with authority_aux_sequence = 20
-    let mut envelope_account = create_existing_envelope(&authority, 0);
-    let envelope_data_mut = &mut envelope_account.data;
-    let envelope: &mut Envelope = bytemuck::from_bytes_mut(envelope_data_mut);
+    // Create delegated envelope with authority_aux_sequence = 20
+    let mut envelope_account = create_delegated_envelope(
+        &authority,
+        &delegation_auth,
+        Mask::ALL_BLOCKED,
+        Mask::ALL_WRITABLE,
+    );
+    let envelope: &mut Envelope = bytemuck::from_bytes_mut(&mut envelope_account.data);
     envelope.authority_aux_sequence = 20;
 
     let aux_data = [0xAAu8; AUX_DATA_SIZE];
