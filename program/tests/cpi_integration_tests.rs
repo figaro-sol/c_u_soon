@@ -6,12 +6,11 @@ use c_u_soon_client::{
     update_auxiliary_instruction_data,
 };
 use common::{
-    create_delegated_envelope, create_existing_envelope, create_funded_account, LOG_LOCK,
+    create_delegated_envelope, create_existing_envelope, create_funded_account, new_mollusk,
     PROGRAM_ID, PROGRAM_PATH,
 };
 use mollusk_svm::program::create_program_account_loader_v3;
 use mollusk_svm::result::Check;
-use mollusk_svm::Mollusk;
 use pinocchio::{error::ProgramError, Address};
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
@@ -42,8 +41,7 @@ const ATTACKER_PROBE_PATH: &str = concat!(
 /// Test that delegated writes with bitmask restrictions are enforced
 #[test]
 fn test_delegated_bitmask_enforcement() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
@@ -88,8 +86,7 @@ fn test_delegated_bitmask_enforcement() {
 /// Test that authorization is required for delegation modifications
 #[test]
 fn test_delegation_requires_authority() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let imposter = Address::new_unique();
@@ -128,8 +125,7 @@ fn test_delegation_requires_authority() {
 /// Test that UpdateAuxiliaryForce correctly bumps both sequences
 #[test]
 fn test_force_update_increments_sequences() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
@@ -260,8 +256,7 @@ fn attacker_stale_sequence(oracle_meta: u64, sequence: u64, payload: &[u8]) -> V
 
 #[test]
 fn test_cpi_fast_path_via_byte_writer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -297,11 +292,11 @@ fn test_cpi_fast_path_via_byte_writer() {
 
 #[test]
 fn test_cpi_slow_path_via_byte_writer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
+    let delegation_auth = Address::new_unique();
     let pda = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
@@ -321,11 +316,17 @@ fn test_cpi_slow_path_via_byte_writer() {
         ],
     );
 
+    // UpdateAuxiliary requires delegation; use user_bitmask ALL_WRITABLE
     let result = mollusk.process_and_validate_instruction(
         &instruction,
         &[
             (authority, create_funded_account(1_000_000_000)),
-            (envelope_pubkey, create_existing_envelope(&authority, 0)),
+            (envelope_pubkey, create_delegated_envelope(
+                &authority,
+                &delegation_auth,
+                Mask::ALL_BLOCKED,
+                Mask::ALL_WRITABLE,
+            )),
             (pda, create_funded_account(0)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
@@ -342,8 +343,7 @@ fn test_cpi_slow_path_via_byte_writer() {
 
 #[test]
 fn test_cpi_delegated_via_byte_writer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -391,8 +391,7 @@ fn test_cpi_delegated_via_byte_writer() {
 
 #[test]
 fn test_cpi_force_via_byte_writer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -451,8 +450,7 @@ fn test_cpi_force_via_byte_writer() {
 // rejected; the specific error code should be investigated separately.
 #[test]
 fn test_cpi_attack_without_authority_signer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
+    let mut mollusk = new_mollusk(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -484,8 +482,7 @@ fn test_cpi_attack_without_authority_signer() {
 // See MOLLUSK BUG comment on test_cpi_attack_without_authority_signer
 #[test]
 fn test_cpi_attack_wrong_authority() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
+    let mut mollusk = new_mollusk(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let actual_authority = Address::new_unique();
@@ -517,8 +514,7 @@ fn test_cpi_attack_wrong_authority() {
 
 #[test]
 fn test_cpi_attack_slow_path_without_pda_signer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
+    let mut mollusk = new_mollusk(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -538,6 +534,7 @@ fn test_cpi_attack_slow_path_without_pda_signer() {
         ],
     );
 
+    // Attack meaning changed in b1b7448: UpdateAuxiliary now rejects without delegation
     mollusk.process_and_validate_instruction(
         &instruction,
         &[
@@ -546,14 +543,13 @@ fn test_cpi_attack_slow_path_without_pda_signer() {
             (fake_pda, create_funded_account(0)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
-        &[Check::err(ProgramError::MissingRequiredSignature)],
+        &[Check::err(ProgramError::InvalidArgument)],
     );
 }
 
 #[test]
 fn test_cpi_attack_wrong_delegation_authority() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
+    let mut mollusk = new_mollusk(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
@@ -564,12 +560,13 @@ fn test_cpi_attack_wrong_delegation_authority() {
 
     let aux_data = [0u8; 256];
     let ix_data = attacker_wrong_delegation_authority(1, &aux_data);
+    // Account order changed in b1b7448: [0]=wrong_delegation, [1]=envelope (was reversed)
     let instruction = Instruction::new_with_bytes(
         ATTACKER_PROBE_ID,
         &ix_data,
         vec![
-            AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(wrong_delegation, true),
+            AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(padding, false),
             AccountMeta::new_readonly(PROGRAM_ID, false),
         ],
@@ -578,13 +575,13 @@ fn test_cpi_attack_wrong_delegation_authority() {
     mollusk.process_and_validate_instruction(
         &instruction,
         &[
+            (wrong_delegation, create_funded_account(1_000_000_000)),
             (envelope_pubkey, create_delegated_envelope(
                 &authority,
                 &real_delegation,
                 Mask::ALL_WRITABLE,
                 Mask::ALL_BLOCKED,
             )),
-            (wrong_delegation, create_funded_account(1_000_000_000)),
             (padding, create_funded_account(0)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
@@ -595,8 +592,7 @@ fn test_cpi_attack_wrong_delegation_authority() {
 // See MOLLUSK BUG comment on test_cpi_attack_without_authority_signer
 #[test]
 fn test_cpi_attack_stale_sequence() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
+    let mut mollusk = new_mollusk(&ATTACKER_PROBE_ID, ATTACKER_PROBE_PATH);
     mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();

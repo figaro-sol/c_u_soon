@@ -8,11 +8,10 @@ use c_u_soon_client::{
     update_auxiliary_instruction_data,
 };
 use common::{
-    create_delegated_envelope, create_existing_envelope, create_funded_account, LOG_LOCK,
+    create_delegated_envelope, create_existing_envelope, create_funded_account, new_mollusk,
     PROGRAM_ID, PROGRAM_PATH,
 };
 use mollusk_svm::result::Check;
-use mollusk_svm::Mollusk;
 use pinocchio::{error::ProgramError, Address};
 use solana_sdk::instruction::{AccountMeta, Instruction};
 
@@ -20,8 +19,7 @@ use solana_sdk::instruction::{AccountMeta, Instruction};
 
 #[test]
 fn test_set_delegated_program_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
@@ -64,8 +62,7 @@ fn test_set_delegated_program_happy_path() {
 
 #[test]
 fn test_set_delegated_program_rejects_if_delegation_exists() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let existing_delegation = Address::new_unique();
@@ -108,8 +105,7 @@ fn test_set_delegated_program_rejects_if_delegation_exists() {
 
 #[test]
 fn test_clear_delegation_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
@@ -155,8 +151,7 @@ fn test_clear_delegation_happy_path() {
 
 #[test]
 fn test_update_auxiliary_with_delegation_applies_bitmask() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
@@ -202,8 +197,7 @@ fn test_update_auxiliary_with_delegation_applies_bitmask() {
 
 #[test]
 fn test_update_auxiliary_delegated_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -255,8 +249,7 @@ fn test_update_auxiliary_delegated_happy_path() {
 
 #[test]
 fn test_update_auxiliary_force_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
@@ -302,8 +295,7 @@ fn test_update_auxiliary_force_happy_path() {
 
 #[test]
 fn test_update_auxiliary_force_fails_without_delegation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -336,8 +328,7 @@ fn test_update_auxiliary_force_fails_without_delegation() {
 
 #[test]
 fn test_sequence_monotonically_increases() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_auth = Address::new_unique();

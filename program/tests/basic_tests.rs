@@ -10,26 +10,19 @@ use c_u_soon_client::{
 use c_u_soon_instruction;
 use common::{
     create_delegated_envelope, create_existing_envelope, create_existing_envelope_with_bump,
-    create_funded_account, find_envelope_pda, LOG_LOCK, PROGRAM_ID, PROGRAM_PATH,
+    create_funded_account, find_envelope_pda, new_mollusk, new_mollusk_silent, PROGRAM_ID,
+    PROGRAM_PATH,
 };
-use mollusk_svm::{program::keyed_account_for_system_program, result::Check, Mollusk};
+use mollusk_svm::{program::keyed_account_for_system_program, result::Check};
 use pinocchio::{error::ProgramError, Address};
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_system_interface::program as system_program;
-
-// LOG_LOCK discipline: every test must acquire LOG_LOCK *before* calling
-// Mollusk::new(). Mollusk::new calls solana_logger::setup_with_default which
-// resets the global log level. If a test calls Mollusk::new without holding
-// the lock, it can race with test_fast_path_all_write_sizes (which holds a
-// write lock and sets log level to Off) and re-enable debug logging mid-loop.
-// Rule: read lock for normal tests, write lock if you need to suppress logs.
 
 // -- Slow path: Create --
 
 #[test]
 fn test_create_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let custom_seeds: &[&[u8]] = &[b"test"];
@@ -66,8 +59,7 @@ fn test_create_happy_path() {
 
 #[test]
 fn test_create_idempotent() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let custom_seeds: &[&[u8]] = &[b"test"];
@@ -105,8 +97,7 @@ fn test_create_idempotent() {
 
 #[test]
 fn test_create_idempotent_wrong_metadata() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let custom_seeds: &[&[u8]] = &[b"test"];
@@ -142,8 +133,7 @@ fn test_create_idempotent_wrong_metadata() {
 
 #[test]
 fn test_create_wrong_pda() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let custom_seeds: &[&[u8]] = &[b"test"];
@@ -176,8 +166,7 @@ fn test_create_wrong_pda() {
 
 #[test]
 fn test_create_not_signer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let custom_seeds: &[&[u8]] = &[b"test"];
@@ -210,8 +199,7 @@ fn test_create_not_signer() {
 
 #[test]
 fn test_fast_path_update_after_create() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -246,8 +234,7 @@ fn test_fast_path_update_after_create() {
 
 #[test]
 fn test_fast_path_wrong_authority() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let wrong_authority = Address::new_unique();
@@ -280,8 +267,7 @@ fn test_fast_path_wrong_authority() {
 
 #[test]
 fn test_fast_path_stale_sequence() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -313,8 +299,7 @@ fn test_fast_path_stale_sequence() {
 
 #[test]
 fn test_fast_path_full_payload() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -356,10 +341,7 @@ fn test_fast_path_full_payload() {
 
 #[test]
 fn test_fast_path_all_write_sizes() {
-    let _log_guard = LOG_LOCK.write().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
-    let prev_log = log::max_level();
-    log::set_max_level(log::LevelFilter::Off);
+    let mollusk = new_mollusk_silent(&PROGRAM_ID, PROGRAM_PATH, log::LevelFilter::Off);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -404,14 +386,11 @@ fn test_fast_path_all_write_sizes() {
 
         envelope_account = result.resulting_accounts[1].1.clone();
     }
-
-    log::set_max_level(prev_log);
 }
 
 #[test]
 fn test_fast_path_length_modulo_replay() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -478,8 +457,7 @@ fn test_fast_path_length_modulo_replay() {
 
 #[test]
 fn test_fast_path_field_isolation_full_payload() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -542,8 +520,7 @@ fn test_fast_path_field_isolation_full_payload() {
 
 #[test]
 fn test_fast_path_rejects_wrong_oracle_metadata() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mut mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mut mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
     mollusk.compute_budget.compute_unit_limit = 100_000;
 
     let authority = Address::new_unique();
@@ -586,8 +563,7 @@ fn test_fast_path_rejects_wrong_oracle_metadata() {
 
 #[test]
 fn test_close_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -624,8 +600,7 @@ fn test_close_happy_path() {
 
 #[test]
 fn test_close_wrong_authority() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let wrong_authority = Address::new_unique();
@@ -657,8 +632,7 @@ fn test_close_wrong_authority() {
 
 #[test]
 fn test_close_not_program_owned() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -690,8 +664,7 @@ fn test_close_not_program_owned() {
 
 #[test]
 fn test_close_delegated_rejected() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -728,8 +701,7 @@ fn test_close_delegated_rejected() {
 
 #[test]
 fn test_close_after_clear_delegation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -797,8 +769,7 @@ fn test_close_after_clear_delegation() {
 
 #[test]
 fn test_set_delegated_program_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -839,8 +810,7 @@ fn test_set_delegated_program_happy_path() {
 
 #[test]
 fn test_set_delegated_program_already_delegated() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -890,8 +860,7 @@ fn test_set_delegated_program_non_canonical_bitmask() {
 
 #[test]
 fn test_set_delegated_program_delegation_not_signer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -924,8 +893,7 @@ fn test_set_delegated_program_delegation_not_signer() {
 
 #[test]
 fn test_clear_delegation_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -968,8 +936,7 @@ fn test_clear_delegation_happy_path() {
 
 #[test]
 fn test_clear_delegation_no_delegation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1000,8 +967,7 @@ fn test_clear_delegation_no_delegation() {
 
 #[test]
 fn test_clear_delegation_wrong_delegation_auth() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1040,8 +1006,7 @@ fn test_clear_delegation_wrong_delegation_auth() {
 
 #[test]
 fn test_update_auxiliary_full_write_no_delegation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1074,8 +1039,7 @@ fn test_update_auxiliary_full_write_no_delegation() {
 
 #[test]
 fn test_update_auxiliary_masked_write_with_delegation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1125,8 +1089,7 @@ fn test_update_auxiliary_masked_write_with_delegation() {
 
 #[test]
 fn test_update_auxiliary_masked_write_blocked() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1171,8 +1134,7 @@ fn test_update_auxiliary_masked_write_blocked() {
 
 #[test]
 fn test_update_auxiliary_stale_sequence() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1237,8 +1199,7 @@ fn test_update_auxiliary_stale_sequence() {
 
 #[test]
 fn test_update_auxiliary_delegated_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1288,8 +1249,7 @@ fn test_update_auxiliary_delegated_happy_path() {
 
 #[test]
 fn test_update_auxiliary_delegated_no_delegation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let envelope_pubkey = Address::new_unique();
     let authority = Address::new_unique();
@@ -1323,8 +1283,7 @@ fn test_update_auxiliary_delegated_no_delegation() {
 
 #[test]
 fn test_update_auxiliary_delegated_wrong_delegation_auth() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1364,8 +1323,7 @@ fn test_update_auxiliary_delegated_wrong_delegation_auth() {
 
 #[test]
 fn test_update_auxiliary_delegated_stale_sequence() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1428,8 +1386,7 @@ fn test_update_auxiliary_delegated_stale_sequence() {
 
 #[test]
 fn test_update_auxiliary_delegated_bitmask_violation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1476,8 +1433,7 @@ fn test_update_auxiliary_delegated_bitmask_violation() {
 
 #[test]
 fn test_update_auxiliary_force_happy_path() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1525,8 +1481,7 @@ fn test_update_auxiliary_force_happy_path() {
 
 #[test]
 fn test_update_auxiliary_force_authority_not_signer() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1564,8 +1519,7 @@ fn test_update_auxiliary_force_authority_not_signer() {
 
 #[test]
 fn test_update_auxiliary_force_no_delegation() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1598,8 +1552,7 @@ fn test_update_auxiliary_force_no_delegation() {
 
 #[test]
 fn test_update_auxiliary_force_stale_authority_sequence() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1661,8 +1614,7 @@ fn test_update_auxiliary_force_stale_authority_sequence() {
 
 #[test]
 fn test_update_auxiliary_force_stale_program_sequence() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1724,8 +1676,7 @@ fn test_update_auxiliary_force_stale_program_sequence() {
 
 #[test]
 fn test_update_auxiliary_force_wrong_delegation_auth() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1766,8 +1717,7 @@ fn test_update_auxiliary_force_wrong_delegation_auth() {
 
 #[test]
 fn test_on_chain_rejects_non_canonical_bitmask() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1811,8 +1761,7 @@ fn test_on_chain_rejects_non_canonical_bitmask() {
 
 #[test]
 fn test_fast_path_full_payload_255_bytes() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -1850,8 +1799,7 @@ fn test_fast_path_full_payload_255_bytes() {
 
 #[test]
 fn test_update_auxiliary_force_sequence_boundaries() {
-    let _log = LOG_LOCK.read().unwrap();
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
@@ -1892,7 +1840,7 @@ fn test_update_auxiliary_force_sequence_boundaries() {
 
 #[test]
 fn test_close_reopen_resets_state() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let custom_seeds: &[&[u8]] = &[b"reopen"];
@@ -1995,7 +1943,7 @@ fn test_close_reopen_resets_state() {
 
 #[test]
 fn test_create_rejects_nonzero_data_len() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let custom_seeds: &[&[u8]] = &[b"grief"];
@@ -2033,7 +1981,7 @@ fn test_create_rejects_nonzero_data_len() {
 
 #[test]
 fn test_update_auxiliary_not_program_owned() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -2065,7 +2013,7 @@ fn test_update_auxiliary_not_program_owned() {
 
 #[test]
 fn test_update_auxiliary_delegated_not_program_owned() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -2103,7 +2051,7 @@ fn test_update_auxiliary_delegated_not_program_owned() {
 
 #[test]
 fn test_update_auxiliary_force_not_program_owned() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -2140,7 +2088,7 @@ fn test_update_auxiliary_force_not_program_owned() {
 
 #[test]
 fn test_set_delegated_program_not_program_owned() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
@@ -2172,7 +2120,7 @@ fn test_set_delegated_program_not_program_owned() {
 
 #[test]
 fn test_clear_delegation_not_program_owned() {
-    let mollusk = Mollusk::new(&PROGRAM_ID, PROGRAM_PATH);
+    let mollusk = new_mollusk(&PROGRAM_ID, PROGRAM_PATH);
 
     let authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();

@@ -4,11 +4,73 @@ use bytemuck::{bytes_of, Zeroable};
 use c_u_soon::{
     Envelope, Mask, OracleState, StructMetadata, AUX_DATA_SIZE, ENVELOPE_SEED, ORACLE_BYTES,
 };
+use mollusk_svm::Mollusk;
 use pinocchio::Address;
 use solana_sdk::account::Account;
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub static LOG_LOCK: RwLock<()> = RwLock::new(());
+static LOG_LOCK: RwLock<()> = RwLock::new(());
+
+// Guard that holds a Mollusk and the log lock for its lifetime.
+// Generic over the lock kind so read-lock and write-lock tests share one type.
+pub struct MolluskGuard<G> {
+    pub mollusk: Mollusk,
+    _log: G,
+}
+
+impl<G> std::ops::Deref for MolluskGuard<G> {
+    type Target = Mollusk;
+    fn deref(&self) -> &Mollusk {
+        &self.mollusk
+    }
+}
+
+impl<G> std::ops::DerefMut for MolluskGuard<G> {
+    fn deref_mut(&mut self) -> &mut Mollusk {
+        &mut self.mollusk
+    }
+}
+
+// Write guard wrapper that restores the log level on drop.
+pub struct LogWriteGuard {
+    _inner: RwLockWriteGuard<'static, ()>,
+    prev_level: log::LevelFilter,
+}
+
+impl Drop for LogWriteGuard {
+    fn drop(&mut self) {
+        log::set_max_level(self.prev_level);
+    }
+}
+
+/// Normal test: acquires read lock, constructs Mollusk, holds lock for test lifetime.
+pub fn new_mollusk(
+    program_id: &Address,
+    program_name: &str,
+) -> MolluskGuard<RwLockReadGuard<'static, ()>> {
+    let _log = LOG_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    let mollusk = Mollusk::new(program_id, program_name);
+    MolluskGuard { mollusk, _log }
+}
+
+/// Log-suppressing test: acquires write lock, sets log level to `level`, constructs Mollusk.
+/// Previous log level is restored automatically when the guard drops.
+pub fn new_mollusk_silent(
+    program_id: &Address,
+    program_name: &str,
+    level: log::LevelFilter,
+) -> MolluskGuard<LogWriteGuard> {
+    let _inner = LOG_LOCK.write().unwrap_or_else(|e| e.into_inner());
+    // Mollusk::new calls setup_with_default() which resets the log level, so
+    // capture prev_level and set our desired level only after construction.
+    let mollusk = Mollusk::new(program_id, program_name);
+    let prev_level = log::max_level();
+    log::set_max_level(level);
+    MolluskGuard {
+        mollusk,
+        _log: LogWriteGuard { _inner, prev_level },
+    }
+}
 
 pub const PROGRAM_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
