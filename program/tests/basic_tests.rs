@@ -11,7 +11,7 @@ use c_u_soon_instruction;
 use common::{
     create_delegated_envelope, create_existing_envelope, create_existing_envelope_with_bump,
     create_funded_account, find_envelope_pda, new_mollusk, new_mollusk_silent, PROGRAM_ID,
-    PROGRAM_PATH,
+    PROGRAM_PATH, TEST_META_U64, TEST_TYPE_SIZE,
 };
 use mollusk_svm::{program::keyed_account_for_system_program, result::Check};
 use pinocchio::{error::ProgramError, Address};
@@ -1014,11 +1014,11 @@ fn test_update_auxiliary_full_write_no_delegation() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1057,12 +1057,12 @@ fn test_update_auxiliary_masked_write_with_delegation() {
         user_bitmask,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xAA; // allowed
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1107,13 +1107,13 @@ fn test_update_auxiliary_masked_write_blocked() {
         user_bitmask,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xAA;
     aux_data[1] = 0xBB; // blocked!
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1148,12 +1148,12 @@ fn test_update_auxiliary_stale_sequence() {
         Mask::ALL_WRITABLE,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     // First update: seq=1
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1176,7 +1176,7 @@ fn test_update_auxiliary_stale_sequence() {
     // Second update: seq=1 again (stale)
     let instruction2 = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1217,16 +1217,16 @@ fn test_update_auxiliary_delegated_happy_path() {
         Mask::ALL_BLOCKED,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xCC;
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(delegation_auth, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, true),
+            AccountMeta::new_readonly(padding, false),
         ],
     );
 
@@ -1258,15 +1258,15 @@ fn test_update_auxiliary_delegated_no_delegation() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(delegation_auth, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, true),
+            AccountMeta::new_readonly(padding, false),
         ],
     );
 
@@ -1298,15 +1298,15 @@ fn test_update_auxiliary_delegated_wrong_delegation_auth() {
         Mask::ALL_BLOCKED,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(wrong_delegation_auth, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, true),
+            AccountMeta::new_readonly(padding, false),
         ],
     );
 
@@ -1337,16 +1337,16 @@ fn test_update_auxiliary_delegated_stale_sequence() {
         Mask::ALL_BLOCKED,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     // First update: seq=1
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(delegation_auth, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, true),
+            AccountMeta::new_readonly(padding, false),
         ],
     );
 
@@ -1365,11 +1365,11 @@ fn test_update_auxiliary_delegated_stale_sequence() {
     // Second: seq=1 again (stale)
     let instruction2 = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(delegation_auth, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, true),
+            AccountMeta::new_readonly(padding, false),
         ],
     );
 
@@ -1404,17 +1404,17 @@ fn test_update_auxiliary_delegated_bitmask_violation() {
         Mask::ALL_BLOCKED,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xCC;
     aux_data[1] = 0xDD; // blocked by program_bitmask
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(delegation_auth, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, true),
+            AccountMeta::new_readonly(padding, false),
         ],
     );
 
@@ -1446,13 +1446,13 @@ fn test_update_auxiliary_force_happy_path() {
         Mask::ALL_BLOCKED,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xDD;
     aux_data[127] = 0xEE;
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 1, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1494,11 +1494,11 @@ fn test_update_auxiliary_force_authority_not_signer() {
         Mask::ALL_BLOCKED,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 1, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, false), // not signer
             AccountMeta::new(envelope_pubkey, false),
@@ -1527,11 +1527,11 @@ fn test_update_auxiliary_force_no_delegation() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 1, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1565,12 +1565,12 @@ fn test_update_auxiliary_force_stale_authority_sequence() {
         Mask::ALL_BLOCKED,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     // First: succeed with (1, 1)
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 1, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1593,7 +1593,7 @@ fn test_update_auxiliary_force_stale_authority_sequence() {
     // Second: stale authority_sequence (1 again), fresh program_sequence (2)
     let instruction2 = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 2, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 2, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1627,12 +1627,12 @@ fn test_update_auxiliary_force_stale_program_sequence() {
         Mask::ALL_BLOCKED,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     // First: succeed with (1, 1)
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 1, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1655,7 +1655,7 @@ fn test_update_auxiliary_force_stale_program_sequence() {
     // Second: fresh authority_sequence (2), stale program_sequence (1)
     let instruction2 = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(2, 1, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 2, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1690,11 +1690,11 @@ fn test_update_auxiliary_force_wrong_delegation_auth() {
         Mask::ALL_BLOCKED,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 1, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1812,12 +1812,12 @@ fn test_update_auxiliary_force_sequence_boundaries() {
         Mask::ALL_WRITABLE,
     );
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
 
     // Test with u64::MAX sequences
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(u64::MAX, u64::MAX, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, u64::MAX, u64::MAX, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -1994,7 +1994,7 @@ fn test_update_auxiliary_not_program_owned() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, [0u8; AUX_DATA_SIZE]).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &[0u8; TEST_TYPE_SIZE]),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -2032,11 +2032,11 @@ fn test_update_auxiliary_delegated_not_program_owned() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, [0u8; AUX_DATA_SIZE]).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &[0u8; TEST_TYPE_SIZE]),
         vec![
             AccountMeta::new_readonly(delegation_auth, true),
             AccountMeta::new(envelope_pubkey, false),
-            AccountMeta::new_readonly(padding, true),
+            AccountMeta::new_readonly(padding, false),
         ],
     );
 
@@ -2069,7 +2069,7 @@ fn test_update_auxiliary_force_not_program_owned() {
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(1, 1, [0u8; AUX_DATA_SIZE]).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 1, 1, &[0u8; TEST_TYPE_SIZE]),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),

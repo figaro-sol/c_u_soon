@@ -4,16 +4,24 @@
 //! Each struct assembles instruction data and accounts, then provides
 //! `invoke()` and `invoke_signed()` methods following the pinocchio convention.
 
-use c_u_soon::{AUX_DATA_SIZE, ORACLE_BYTES};
+use c_u_soon::ORACLE_BYTES;
 use c_u_soon_instruction::{
-    SlowPathInstruction, UPDATE_AUX_FORCE_SERIALIZED_SIZE, UPDATE_AUX_SERIALIZED_SIZE,
+    UPDATE_AUX_DELEGATED_TAG, UPDATE_AUX_FORCE_MAX_SIZE, UPDATE_AUX_FORCE_TAG, UPDATE_AUX_MAX_SIZE,
+    UPDATE_AUX_TAG,
 };
 use pinocchio::{
-    cpi::{invoke, invoke_signed, Signer},
+    cpi::{invoke_signed, Signer},
     error::ProgramError,
     instruction::{InstructionAccount, InstructionView},
     AccountView, ProgramResult,
 };
+
+/// Increment a sequence counter, returning `ArithmeticOverflow` on overflow.
+pub fn next_sequence(current: u64) -> Result<u64, ProgramError> {
+    current
+        .checked_add(1)
+        .ok_or(ProgramError::ArithmeticOverflow)
+}
 
 const FAST_PATH_MAX: usize = 8 + 8 + ORACLE_BYTES; // 255
 
@@ -61,17 +69,20 @@ impl FastPathUpdate<'_> {
 
 /// CPI: UpdateAuxiliary (authority writes aux data).
 ///
+/// Wire format: `[disc:4][metadata:8][sequence:8][data:N]`
+///
 /// Account order: `[authority (readonly signer), envelope (writable), pda (readonly signer)]`
 ///
-/// `pda` is the caller's PDA; the oracle program verifies it as a signer to confirm
+/// `pda` is the caller's PDA; the Solana runtime verifies it as a signer to confirm
 /// the call's origin.
 pub struct UpdateAuxiliary<'a> {
     pub authority: &'a AccountView,
     pub envelope: &'a AccountView,
     pub pda: &'a AccountView,
     pub program: &'a AccountView,
+    pub metadata: u64,
     pub sequence: u64,
-    pub data: &'a [u8; AUX_DATA_SIZE],
+    pub data: &'a [u8],
 }
 
 impl UpdateAuxiliary<'_> {
@@ -80,13 +91,16 @@ impl UpdateAuxiliary<'_> {
     }
 
     pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
-        let ix_enum = SlowPathInstruction::UpdateAuxiliary {
-            sequence: self.sequence,
-            data: *self.data,
-        };
-        let mut buf = [0u8; UPDATE_AUX_SERIALIZED_SIZE];
-        wincode::serialize_into(&mut &mut buf[..], &ix_enum)
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let data_len = self.data.len();
+        let total = 20 + data_len;
+        if total > UPDATE_AUX_MAX_SIZE {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let mut buf = [0u8; UPDATE_AUX_MAX_SIZE];
+        buf[..4].copy_from_slice(&UPDATE_AUX_TAG.to_le_bytes());
+        buf[4..12].copy_from_slice(&self.metadata.to_le_bytes());
+        buf[12..20].copy_from_slice(&self.sequence.to_le_bytes());
+        buf[20..20 + data_len].copy_from_slice(self.data);
 
         let cpi_accounts = [
             InstructionAccount::readonly_signer(self.authority.address()),
@@ -96,7 +110,7 @@ impl UpdateAuxiliary<'_> {
         let ix = InstructionView {
             program_id: self.program.address(),
             accounts: &cpi_accounts,
-            data: &buf,
+            data: &buf[..total],
         };
         invoke_signed(&ix, &[self.authority, self.envelope, self.pda], signers)
     }
@@ -104,17 +118,21 @@ impl UpdateAuxiliary<'_> {
 
 /// CPI: UpdateAuxiliaryDelegated (delegated program writes aux data).
 ///
+/// Wire format: `[disc:4][metadata:8][sequence:8][data:N]`
+///
 /// Account order: `[delegation_auth (readonly signer), envelope (writable), padding (readonly)]`
 ///
-/// `delegation_auth` must match `envelope.delegation_authority`. `padding` fills
-/// the third account slot and is not checked as a signer.
+/// `delegation_auth` must match `envelope.delegation_authority`.
+/// `padding` is required so the instruction has 3 accounts and routes to the slow path
+/// (2-account instructions are intercepted by the fast path for oracle updates).
 pub struct UpdateAuxiliaryDelegated<'a> {
     pub envelope: &'a AccountView,
     pub delegation_auth: &'a AccountView,
     pub padding: &'a AccountView,
     pub program: &'a AccountView,
+    pub metadata: u64,
     pub sequence: u64,
-    pub data: &'a [u8; AUX_DATA_SIZE],
+    pub data: &'a [u8],
 }
 
 impl UpdateAuxiliaryDelegated<'_> {
@@ -123,13 +141,16 @@ impl UpdateAuxiliaryDelegated<'_> {
     }
 
     pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
-        let ix_enum = SlowPathInstruction::UpdateAuxiliaryDelegated {
-            sequence: self.sequence,
-            data: *self.data,
-        };
-        let mut buf = [0u8; UPDATE_AUX_SERIALIZED_SIZE];
-        wincode::serialize_into(&mut &mut buf[..], &ix_enum)
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let data_len = self.data.len();
+        let total = 20 + data_len;
+        if total > UPDATE_AUX_MAX_SIZE {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let mut buf = [0u8; UPDATE_AUX_MAX_SIZE];
+        buf[..4].copy_from_slice(&UPDATE_AUX_DELEGATED_TAG.to_le_bytes());
+        buf[4..12].copy_from_slice(&self.metadata.to_le_bytes());
+        buf[12..20].copy_from_slice(&self.sequence.to_le_bytes());
+        buf[20..20 + data_len].copy_from_slice(self.data);
 
         let cpi_accounts = [
             InstructionAccount::readonly_signer(self.delegation_auth.address()),
@@ -139,7 +160,7 @@ impl UpdateAuxiliaryDelegated<'_> {
         let ix = InstructionView {
             program_id: self.program.address(),
             accounts: &cpi_accounts,
-            data: &buf,
+            data: &buf[..total],
         };
         invoke_signed(
             &ix,
@@ -151,15 +172,18 @@ impl UpdateAuxiliaryDelegated<'_> {
 
 /// CPI: UpdateAuxiliaryForce (authority overrides both sequence counters).
 ///
+/// Wire format: `[disc:4][metadata:8][auth_seq:8][prog_seq:8][data:N]`
+///
 /// Account order: `[authority (readonly signer), envelope (writable), delegation_auth (readonly signer)]`
 pub struct UpdateAuxiliaryForce<'a> {
     pub authority: &'a AccountView,
     pub envelope: &'a AccountView,
     pub delegation_auth: &'a AccountView,
     pub program: &'a AccountView,
+    pub metadata: u64,
     pub authority_sequence: u64,
     pub program_sequence: u64,
-    pub data: &'a [u8; AUX_DATA_SIZE],
+    pub data: &'a [u8],
 }
 
 impl UpdateAuxiliaryForce<'_> {
@@ -168,14 +192,17 @@ impl UpdateAuxiliaryForce<'_> {
     }
 
     pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
-        let ix_enum = SlowPathInstruction::UpdateAuxiliaryForce {
-            authority_sequence: self.authority_sequence,
-            program_sequence: self.program_sequence,
-            data: *self.data,
-        };
-        let mut buf = [0u8; UPDATE_AUX_FORCE_SERIALIZED_SIZE];
-        wincode::serialize_into(&mut &mut buf[..], &ix_enum)
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let data_len = self.data.len();
+        let total = 28 + data_len;
+        if total > UPDATE_AUX_FORCE_MAX_SIZE {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let mut buf = [0u8; UPDATE_AUX_FORCE_MAX_SIZE];
+        buf[..4].copy_from_slice(&UPDATE_AUX_FORCE_TAG.to_le_bytes());
+        buf[4..12].copy_from_slice(&self.metadata.to_le_bytes());
+        buf[12..20].copy_from_slice(&self.authority_sequence.to_le_bytes());
+        buf[20..28].copy_from_slice(&self.program_sequence.to_le_bytes());
+        buf[28..28 + data_len].copy_from_slice(self.data);
 
         let cpi_accounts = [
             InstructionAccount::readonly_signer(self.authority.address()),
@@ -185,7 +212,7 @@ impl UpdateAuxiliaryForce<'_> {
         let ix = InstructionView {
             program_id: self.program.address(),
             accounts: &cpi_accounts,
-            data: &buf,
+            data: &buf[..total],
         };
         invoke_signed(
             &ix,

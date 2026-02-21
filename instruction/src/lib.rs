@@ -12,13 +12,25 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use c_u_soon::{AUX_DATA_SIZE, MASK_SIZE, MAX_CUSTOM_SEEDS};
+use c_u_soon::{MASK_SIZE, MAX_AUX_STRUCT_SIZE, MAX_CUSTOM_SEEDS};
 use wincode::{SchemaRead, SchemaWrite};
 
-/// Wincode serialized size: 4 (disc) + 8 (seq) + 256 (data)
-pub const UPDATE_AUX_SERIALIZED_SIZE: usize = 4 + 8 + AUX_DATA_SIZE;
-/// Wincode serialized size: 4 (disc) + 8 (auth_seq) + 8 (prog_seq) + 256 (data)
-pub const UPDATE_AUX_FORCE_SERIALIZED_SIZE: usize = 4 + 8 + 8 + AUX_DATA_SIZE;
+/// Wire format tag for UpdateAuxiliary: `[disc:4][metadata:8][sequence:8][data:N]`
+pub const UPDATE_AUX_TAG: u32 = 4;
+/// Wire format tag for UpdateAuxiliaryDelegated: `[disc:4][metadata:8][sequence:8][data:N]`
+pub const UPDATE_AUX_DELEGATED_TAG: u32 = 5;
+/// Wire format tag for UpdateAuxiliaryForce: `[disc:4][metadata:8][auth_seq:8][prog_seq:8][data:N]`
+pub const UPDATE_AUX_FORCE_TAG: u32 = 6;
+
+/// Header size for UpdateAuxiliary/UpdateAuxiliaryDelegated: disc(4) + metadata(8) + sequence(8)
+pub const UPDATE_AUX_HEADER_SIZE: usize = 4 + 8 + 8;
+/// Header size for UpdateAuxiliaryForce: disc(4) + metadata(8) + auth_seq(8) + prog_seq(8)
+pub const UPDATE_AUX_FORCE_HEADER_SIZE: usize = 4 + 8 + 8 + 8;
+
+/// Max serialized size for UpdateAuxiliary/Delegated: header(20) + max_data(255) = 275
+pub const UPDATE_AUX_MAX_SIZE: usize = UPDATE_AUX_HEADER_SIZE + MAX_AUX_STRUCT_SIZE;
+/// Max serialized size for UpdateAuxiliaryForce: header(28) + max_data(255) = 283
+pub const UPDATE_AUX_FORCE_MAX_SIZE: usize = UPDATE_AUX_FORCE_HEADER_SIZE + MAX_AUX_STRUCT_SIZE;
 
 /// Instruction enum for slow-path operations on a c_u_soon oracle account.
 ///
@@ -37,12 +49,10 @@ pub const UPDATE_AUX_FORCE_SERIALIZED_SIZE: usize = 4 + 8 + 8 + AUX_DATA_SIZE;
 ///   `program_bitmask` limits what the delegate can write; `user_bitmask` limits what
 ///   the authority can write while delegation is in effect.
 /// - `ClearDelegation`: removes the delegated program and zeros the oracle state.
-/// - `UpdateAuxiliary`: authority writes the full aux buffer. `sequence` must match
-///   the oracle's current authority sequence counter.
-/// - `UpdateAuxiliaryDelegated`: delegated program writes aux data. `sequence` must
-///   match the oracle's current program sequence counter.
-/// - `UpdateAuxiliaryForce`: authority resets both sequence counters and writes aux
-///   data, bypassing the normal sequence check. Used to recover from desync.
+///
+/// Update variants (tags 4-6) use a manual wire format (not wincode) for
+/// variable-length data; see `UPDATE_AUX_TAG`, `UPDATE_AUX_DELEGATED_TAG`,
+/// `UPDATE_AUX_FORCE_TAG`.
 #[derive(Debug, Clone, SchemaWrite, SchemaRead)]
 pub enum SlowPathInstruction {
     #[wincode(tag = 0)]
@@ -60,22 +70,6 @@ pub enum SlowPathInstruction {
     },
     #[wincode(tag = 3)]
     ClearDelegation,
-    #[wincode(tag = 4)]
-    UpdateAuxiliary {
-        sequence: u64,
-        data: [u8; AUX_DATA_SIZE],
-    },
-    #[wincode(tag = 5)]
-    UpdateAuxiliaryDelegated {
-        sequence: u64,
-        data: [u8; AUX_DATA_SIZE],
-    },
-    #[wincode(tag = 6)]
-    UpdateAuxiliaryForce {
-        authority_sequence: u64,
-        program_sequence: u64,
-        data: [u8; AUX_DATA_SIZE],
-    },
 }
 
 impl SlowPathInstruction {
@@ -83,7 +77,7 @@ impl SlowPathInstruction {
     ///
     /// - `Create`: rejects if `custom_seeds.len() > MAX_CUSTOM_SEEDS` or any seed is > 32 bytes.
     /// - `SetDelegatedProgram`: rejects if any byte in either bitmask is not `0x00` or `0xFF`.
-    /// - All other variants always return `true`.
+    /// - `Close` and `ClearDelegation` always return `true`.
     ///
     /// Account-level checks (signer authority, PDA derivation, sequence counters) are
     /// not performed here; those happen in the program handler.
@@ -107,7 +101,7 @@ impl SlowPathInstruction {
                 .iter()
                 .chain(user_bitmask.iter())
                 .all(|&b| b == 0x00 || b == 0xFF),
-            _ => true,
+            SlowPathInstruction::Close | SlowPathInstruction::ClearDelegation => true,
         }
     }
 }
@@ -115,32 +109,6 @@ impl SlowPathInstruction {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn serialized_size_constants_match() {
-        let aux = wincode::serialize(&SlowPathInstruction::UpdateAuxiliary {
-            sequence: 0,
-            data: [0; AUX_DATA_SIZE],
-        })
-        .unwrap();
-        assert_eq!(
-            aux.len(),
-            UPDATE_AUX_SERIALIZED_SIZE,
-            "UPDATE_AUX_SERIALIZED_SIZE mismatch"
-        );
-
-        let force = wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryForce {
-            authority_sequence: 0,
-            program_sequence: 0,
-            data: [0; AUX_DATA_SIZE],
-        })
-        .unwrap();
-        assert_eq!(
-            force.len(),
-            UPDATE_AUX_FORCE_SERIALIZED_SIZE,
-            "UPDATE_AUX_FORCE_SERIALIZED_SIZE mismatch"
-        );
-    }
 
     #[test]
     fn discriminant_stability() {
@@ -162,28 +130,6 @@ mod tests {
                 2,
             ),
             (SlowPathInstruction::ClearDelegation, 3),
-            (
-                SlowPathInstruction::UpdateAuxiliary {
-                    sequence: 0,
-                    data: [0; AUX_DATA_SIZE],
-                },
-                4,
-            ),
-            (
-                SlowPathInstruction::UpdateAuxiliaryDelegated {
-                    sequence: 0,
-                    data: [0; AUX_DATA_SIZE],
-                },
-                5,
-            ),
-            (
-                SlowPathInstruction::UpdateAuxiliaryForce {
-                    authority_sequence: 0,
-                    program_sequence: 0,
-                    data: [0; AUX_DATA_SIZE],
-                },
-                6,
-            ),
         ];
         for (ix, expected_disc) in cases {
             let bytes = wincode::serialize(ix).unwrap();
@@ -195,6 +141,71 @@ mod tests {
                 core::mem::discriminant(ix)
             );
         }
+    }
+
+    #[test]
+    fn test_update_aux_tags_match_old_discriminants() {
+        assert_eq!(UPDATE_AUX_TAG, 4);
+        assert_eq!(UPDATE_AUX_DELEGATED_TAG, 5);
+        assert_eq!(UPDATE_AUX_FORCE_TAG, 6);
+    }
+
+    #[test]
+    fn test_header_size_constants() {
+        assert_eq!(UPDATE_AUX_HEADER_SIZE, 20);
+        assert_eq!(UPDATE_AUX_FORCE_HEADER_SIZE, 28);
+        assert_eq!(UPDATE_AUX_MAX_SIZE, 275);
+        assert_eq!(UPDATE_AUX_FORCE_MAX_SIZE, 283);
+    }
+
+    #[test]
+    fn test_manual_wire_format_update_aux() {
+        let metadata: u64 = 0xDEAD_BEEF_1234_5678;
+        let sequence: u64 = 42;
+        let data = [0xAA; 200];
+
+        let mut buf = alloc::vec![];
+        buf.extend_from_slice(&UPDATE_AUX_TAG.to_le_bytes());
+        buf.extend_from_slice(&metadata.to_le_bytes());
+        buf.extend_from_slice(&sequence.to_le_bytes());
+        buf.extend_from_slice(&data);
+
+        assert_eq!(buf.len(), UPDATE_AUX_HEADER_SIZE + 200);
+
+        let disc = u32::from_le_bytes(buf[..4].try_into().unwrap());
+        assert_eq!(disc, UPDATE_AUX_TAG);
+        let parsed_meta = u64::from_le_bytes(buf[4..12].try_into().unwrap());
+        assert_eq!(parsed_meta, metadata);
+        let parsed_seq = u64::from_le_bytes(buf[12..20].try_into().unwrap());
+        assert_eq!(parsed_seq, sequence);
+        assert_eq!(&buf[20..], &data);
+    }
+
+    #[test]
+    fn test_manual_wire_format_update_aux_force() {
+        let metadata: u64 = 0x1234;
+        let auth_seq: u64 = 10;
+        let prog_seq: u64 = 20;
+        let data = [0xBB; 100];
+
+        let mut buf = alloc::vec![];
+        buf.extend_from_slice(&UPDATE_AUX_FORCE_TAG.to_le_bytes());
+        buf.extend_from_slice(&metadata.to_le_bytes());
+        buf.extend_from_slice(&auth_seq.to_le_bytes());
+        buf.extend_from_slice(&prog_seq.to_le_bytes());
+        buf.extend_from_slice(&data);
+
+        assert_eq!(buf.len(), UPDATE_AUX_FORCE_HEADER_SIZE + 100);
+
+        let disc = u32::from_le_bytes(buf[..4].try_into().unwrap());
+        assert_eq!(disc, UPDATE_AUX_FORCE_TAG);
+        let parsed_meta = u64::from_le_bytes(buf[4..12].try_into().unwrap());
+        assert_eq!(parsed_meta, metadata);
+        let parsed_auth = u64::from_le_bytes(buf[12..20].try_into().unwrap());
+        assert_eq!(parsed_auth, auth_seq);
+        let parsed_prog = u64::from_le_bytes(buf[20..28].try_into().unwrap());
+        assert_eq!(parsed_prog, prog_seq);
+        assert_eq!(&buf[28..], &data);
     }
 
     #[test]
@@ -250,21 +261,6 @@ mod tests {
     }
 
     #[test]
-    fn test_wincode_roundtrip_update_auxiliary() {
-        let data = [42u8; AUX_DATA_SIZE];
-        let ix = SlowPathInstruction::UpdateAuxiliary { sequence: 7, data };
-        let serialized = wincode::serialize(&ix).unwrap();
-        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
-        match deserialized {
-            SlowPathInstruction::UpdateAuxiliary { sequence, data: d } => {
-                assert_eq!(sequence, 7);
-                assert_eq!(d, data);
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
     fn test_wincode_roundtrip_close() {
         let ix = SlowPathInstruction::Close;
         let serialized = wincode::serialize(&ix).unwrap();
@@ -303,44 +299,5 @@ mod tests {
         let serialized = wincode::serialize(&ix).unwrap();
         let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
         assert!(matches!(deserialized, SlowPathInstruction::ClearDelegation));
-    }
-
-    #[test]
-    fn test_wincode_roundtrip_update_auxiliary_delegated() {
-        let data = [0xBBu8; AUX_DATA_SIZE];
-        let ix = SlowPathInstruction::UpdateAuxiliaryDelegated { sequence: 99, data };
-        let serialized = wincode::serialize(&ix).unwrap();
-        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
-        match deserialized {
-            SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data: d } => {
-                assert_eq!(sequence, 99);
-                assert_eq!(d, data);
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_wincode_roundtrip_update_auxiliary_force() {
-        let data = [0xCCu8; AUX_DATA_SIZE];
-        let ix = SlowPathInstruction::UpdateAuxiliaryForce {
-            authority_sequence: 10,
-            program_sequence: 20,
-            data,
-        };
-        let serialized = wincode::serialize(&ix).unwrap();
-        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
-        match deserialized {
-            SlowPathInstruction::UpdateAuxiliaryForce {
-                authority_sequence,
-                program_sequence,
-                data: d,
-            } => {
-                assert_eq!(authority_sequence, 10);
-                assert_eq!(program_sequence, 20);
-                assert_eq!(d, data);
-            }
-            _ => panic!("Wrong variant"),
-        }
     }
 }

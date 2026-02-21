@@ -1,5 +1,8 @@
 use c_u_soon::Mask;
-use c_u_soon_instruction::SlowPathInstruction;
+use c_u_soon_instruction::{
+    SlowPathInstruction, UPDATE_AUX_DELEGATED_TAG, UPDATE_AUX_FORCE_HEADER_SIZE,
+    UPDATE_AUX_FORCE_TAG, UPDATE_AUX_HEADER_SIZE, UPDATE_AUX_TAG,
+};
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
 
 use super::instructions;
@@ -18,60 +21,88 @@ pub(crate) unsafe fn slow_entrypoint(input: *mut u8) -> u64 {
     pinocchio::entrypoint::process_entrypoint::<64>(input, process_instruction)
 }
 
-/// Deserialize and dispatch a [`SlowPathInstruction`].
+/// Dispatch a slow-path instruction.
 ///
-/// Returns [`ProgramError::InvalidInstructionData`] if `wincode` deserialization fails or
-/// `ix.validate()` returns false. `validate()` checks structural invariants (seed counts,
-/// seed lengths, mask canonicality) before the handler runs.
+/// Tags 0-3 (Create, Close, SetDelegatedProgram, ClearDelegation) use wincode.
+/// Tags 4-6 (UpdateAuxiliary, UpdateAuxiliaryDelegated, UpdateAuxiliaryForce) use
+/// a manual wire format: `[disc:4][metadata:8][sequence(s):8/16][data:N]`.
 fn process_instruction(
     program_id: &Address,
     accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let ix: SlowPathInstruction =
-        wincode::deserialize(data).map_err(|_| ProgramError::InvalidInstructionData)?;
-
-    if !ix.validate() {
+    if data.len() < 4 {
         return Err(ProgramError::InvalidInstructionData);
     }
+    let disc = u32::from_le_bytes(data[..4].try_into().unwrap());
 
-    match ix {
-        SlowPathInstruction::Create {
-            custom_seeds,
-            bump,
-            oracle_metadata,
-        } => {
-            instructions::create::process(program_id, accounts, custom_seeds, bump, oracle_metadata)
+    match disc {
+        UPDATE_AUX_TAG => {
+            if data.len() < UPDATE_AUX_HEADER_SIZE {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let metadata = u64::from_le_bytes(data[4..12].try_into().unwrap());
+            let sequence = u64::from_le_bytes(data[12..20].try_into().unwrap());
+            let aux_data = &data[20..];
+            instructions::update_auxiliary::process(
+                program_id, accounts, metadata, sequence, aux_data,
+            )
         }
-        SlowPathInstruction::Close => instructions::close::process(program_id, accounts),
-        SlowPathInstruction::SetDelegatedProgram {
-            program_bitmask,
-            user_bitmask,
-        } => instructions::set_delegated_program::process(
-            program_id,
-            accounts,
-            &Mask::from(program_bitmask),
-            &Mask::from(user_bitmask),
-        ),
-        SlowPathInstruction::ClearDelegation => {
-            instructions::clear_delegation::process(program_id, accounts)
+        UPDATE_AUX_DELEGATED_TAG => {
+            if data.len() < UPDATE_AUX_HEADER_SIZE {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let metadata = u64::from_le_bytes(data[4..12].try_into().unwrap());
+            let sequence = u64::from_le_bytes(data[12..20].try_into().unwrap());
+            let aux_data = &data[20..];
+            instructions::update_auxiliary_delegated::process(
+                program_id, accounts, metadata, sequence, aux_data,
+            )
         }
-        SlowPathInstruction::UpdateAuxiliary { sequence, data } => {
-            instructions::update_auxiliary::process(program_id, accounts, sequence, &data)
+        UPDATE_AUX_FORCE_TAG => {
+            if data.len() < UPDATE_AUX_FORCE_HEADER_SIZE {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let metadata = u64::from_le_bytes(data[4..12].try_into().unwrap());
+            let auth_seq = u64::from_le_bytes(data[12..20].try_into().unwrap());
+            let prog_seq = u64::from_le_bytes(data[20..28].try_into().unwrap());
+            let aux_data = &data[28..];
+            instructions::update_auxiliary_force::process(
+                program_id, accounts, metadata, auth_seq, prog_seq, aux_data,
+            )
         }
-        SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data } => {
-            instructions::update_auxiliary_delegated::process(program_id, accounts, sequence, &data)
+        _ => {
+            let ix: SlowPathInstruction =
+                wincode::deserialize(data).map_err(|_| ProgramError::InvalidInstructionData)?;
+            if !ix.validate() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            match ix {
+                SlowPathInstruction::Create {
+                    custom_seeds,
+                    bump,
+                    oracle_metadata,
+                } => instructions::create::process(
+                    program_id,
+                    accounts,
+                    custom_seeds,
+                    bump,
+                    oracle_metadata,
+                ),
+                SlowPathInstruction::Close => instructions::close::process(program_id, accounts),
+                SlowPathInstruction::SetDelegatedProgram {
+                    program_bitmask,
+                    user_bitmask,
+                } => instructions::set_delegated_program::process(
+                    program_id,
+                    accounts,
+                    &Mask::from(program_bitmask),
+                    &Mask::from(user_bitmask),
+                ),
+                SlowPathInstruction::ClearDelegation => {
+                    instructions::clear_delegation::process(program_id, accounts)
+                }
+            }
         }
-        SlowPathInstruction::UpdateAuxiliaryForce {
-            authority_sequence,
-            program_sequence,
-            data,
-        } => instructions::update_auxiliary_force::process(
-            program_id,
-            accounts,
-            authority_sequence,
-            program_sequence,
-            &data,
-        ),
     }
 }

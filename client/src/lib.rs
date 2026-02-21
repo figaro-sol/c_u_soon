@@ -8,8 +8,10 @@
 //! All functions return `Vec<u8>` to pass as transaction instruction data. The `_typed`
 //! variants take a `T: TypeHash` and read `T::METADATA` so you don't pass it manually.
 
-use c_u_soon::{Mask, StructMetadata, TypeHash, AUX_DATA_SIZE, MAX_CUSTOM_SEEDS, ORACLE_BYTES};
-use c_u_soon_instruction::SlowPathInstruction;
+use c_u_soon::{Mask, StructMetadata, TypeHash, MAX_CUSTOM_SEEDS, ORACLE_BYTES};
+use c_u_soon_instruction::{
+    SlowPathInstruction, UPDATE_AUX_DELEGATED_TAG, UPDATE_AUX_FORCE_TAG, UPDATE_AUX_TAG,
+};
 
 /// Errors returned by instruction builders.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,46 +140,81 @@ pub fn clear_delegation_instruction_data() -> Result<Vec<u8>, InstructionError> 
         .map_err(|_| InstructionError::SerializationFailed)
 }
 
-/// Serialize an `UpdateAuxiliary` instruction (slow path): authority writes the full aux buffer.
+/// Build `UpdateAuxiliary` instruction data (manual wire format).
 ///
-/// `sequence` must match the oracle's current authority sequence counter.
-/// The program rejects the instruction if it does not match.
-pub fn update_auxiliary_instruction_data(
-    sequence: u64,
-    data: [u8; AUX_DATA_SIZE],
-) -> Result<Vec<u8>, InstructionError> {
-    wincode::serialize(&SlowPathInstruction::UpdateAuxiliary { sequence, data })
-        .map_err(|_| InstructionError::SerializationFailed)
+/// Wire: `[disc:4][metadata:8][sequence:8][data:N]`
+///
+/// `metadata` is `T::METADATA.as_u64()`. `sequence` must match the oracle's current
+/// authority sequence counter. `data` is the raw aux bytes (length = `type_size`).
+pub fn update_auxiliary_instruction_data(metadata: u64, sequence: u64, data: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(20 + data.len());
+    buf.extend_from_slice(&UPDATE_AUX_TAG.to_le_bytes());
+    buf.extend_from_slice(&metadata.to_le_bytes());
+    buf.extend_from_slice(&sequence.to_le_bytes());
+    buf.extend_from_slice(data);
+    buf
 }
 
-/// Serialize an `UpdateAuxiliaryForce` instruction (slow path): authority resets both sequence counters and writes aux data.
+/// Build `UpdateAuxiliaryForce` instruction data (manual wire format).
 ///
-/// Sets the oracle's authority and program sequence counters to `authority_sequence` and
-/// `program_sequence` respectively, bypassing the normal match check. Use this to recover
-/// when the two counters have drifted out of sync.
+/// Wire: `[disc:4][metadata:8][auth_seq:8][prog_seq:8][data:N]`
 pub fn update_auxiliary_force_instruction_data(
+    metadata: u64,
     authority_sequence: u64,
     program_sequence: u64,
-    data: [u8; AUX_DATA_SIZE],
-) -> Result<Vec<u8>, InstructionError> {
-    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryForce {
-        authority_sequence,
-        program_sequence,
-        data,
-    })
-    .map_err(|_| InstructionError::SerializationFailed)
+    data: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(28 + data.len());
+    buf.extend_from_slice(&UPDATE_AUX_FORCE_TAG.to_le_bytes());
+    buf.extend_from_slice(&metadata.to_le_bytes());
+    buf.extend_from_slice(&authority_sequence.to_le_bytes());
+    buf.extend_from_slice(&program_sequence.to_le_bytes());
+    buf.extend_from_slice(data);
+    buf
 }
 
-/// Serialize an `UpdateAuxiliaryDelegated` instruction (slow path): delegated program writes aux data.
+/// Build `UpdateAuxiliaryDelegated` instruction data (manual wire format).
 ///
-/// `sequence` must match the oracle's current program sequence counter.
-/// The program rejects the instruction if the caller is not the registered delegated program.
+/// Wire: `[disc:4][metadata:8][sequence:8][data:N]`
 pub fn update_auxiliary_delegated_instruction_data(
+    metadata: u64,
     sequence: u64,
-    data: [u8; AUX_DATA_SIZE],
-) -> Result<Vec<u8>, InstructionError> {
-    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryDelegated { sequence, data })
-        .map_err(|_| InstructionError::SerializationFailed)
+    data: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(20 + data.len());
+    buf.extend_from_slice(&UPDATE_AUX_DELEGATED_TAG.to_le_bytes());
+    buf.extend_from_slice(&metadata.to_le_bytes());
+    buf.extend_from_slice(&sequence.to_le_bytes());
+    buf.extend_from_slice(data);
+    buf
+}
+
+/// Typed `UpdateAuxiliary`: derives metadata from `T::METADATA`.
+pub fn update_auxiliary_typed<T: TypeHash>(sequence: u64, value: &T) -> Vec<u8> {
+    update_auxiliary_instruction_data(T::METADATA.as_u64(), sequence, bytemuck::bytes_of(value))
+}
+
+/// Typed `UpdateAuxiliaryDelegated`: derives metadata from `T::METADATA`.
+pub fn update_auxiliary_delegated_typed<T: TypeHash>(sequence: u64, value: &T) -> Vec<u8> {
+    update_auxiliary_delegated_instruction_data(
+        T::METADATA.as_u64(),
+        sequence,
+        bytemuck::bytes_of(value),
+    )
+}
+
+/// Typed `UpdateAuxiliaryForce`: derives metadata from `T::METADATA`.
+pub fn update_auxiliary_force_typed<T: TypeHash>(
+    authority_sequence: u64,
+    program_sequence: u64,
+    value: &T,
+) -> Vec<u8> {
+    update_auxiliary_force_instruction_data(
+        T::METADATA.as_u64(),
+        authority_sequence,
+        program_sequence,
+        bytemuck::bytes_of(value),
+    )
 }
 
 /// Typed `Create`: derives oracle metadata from `T::METADATA` at compile time.
@@ -289,5 +326,42 @@ mod tests {
         assert!(
             set_delegated_program_instruction_data(Mask::ALL_WRITABLE, Mask::ALL_BLOCKED).is_ok()
         );
+    }
+
+    #[test]
+    fn typed_update_aux_matches_untyped() {
+        let value: u32 = 0xDEAD_BEEF;
+        let typed = update_auxiliary_typed::<u32>(5, &value);
+        let untyped = update_auxiliary_instruction_data(
+            u32::METADATA.as_u64(),
+            5,
+            bytemuck::bytes_of(&value),
+        );
+        assert_eq!(typed, untyped);
+    }
+
+    #[test]
+    fn typed_update_aux_delegated_matches_untyped() {
+        let value: u32 = 0xCAFE_BABE;
+        let typed = update_auxiliary_delegated_typed::<u32>(7, &value);
+        let untyped = update_auxiliary_delegated_instruction_data(
+            u32::METADATA.as_u64(),
+            7,
+            bytemuck::bytes_of(&value),
+        );
+        assert_eq!(typed, untyped);
+    }
+
+    #[test]
+    fn typed_update_aux_force_matches_untyped() {
+        let value: u32 = 0x1234_5678;
+        let typed = update_auxiliary_force_typed::<u32>(3, 10, &value);
+        let untyped = update_auxiliary_force_instruction_data(
+            u32::METADATA.as_u64(),
+            3,
+            10,
+            bytemuck::bytes_of(&value),
+        );
+        assert_eq!(typed, untyped);
     }
 }

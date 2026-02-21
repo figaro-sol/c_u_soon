@@ -27,6 +27,11 @@ pub const ORACLE_BYTES: usize = 239;
 /// Byte size of the auxiliary data region and each [`Mask`].
 pub const AUX_DATA_SIZE: usize = 256;
 
+/// Maximum byte size for a typed auxiliary struct. Equals `u8::MAX` because
+/// [`StructMetadata`] encodes `type_size` in 8 bits. One byte less than
+/// [`AUX_DATA_SIZE`] (the on-chain Envelope buffer).
+pub const MAX_AUX_STRUCT_SIZE: usize = 255;
+
 /// Number of bytes in a [`Mask`]: one control byte per auxiliary data byte.
 pub const MASK_SIZE: usize = 256;
 
@@ -373,19 +378,22 @@ impl Mask {
 
     /// Apply a masked update: copy bytes from `src` to `dest` where the mask allows.
     ///
-    /// Returns `true` if the update was fully applied (all requested changes were permitted).
-    /// Returns `false` if any requested change was blocked by the mask.
+    /// `src` may be shorter than `AUX_DATA_SIZE`; only `src.len()` bytes are validated
+    /// and copied. Returns `false` if `src` exceeds `AUX_DATA_SIZE` or if any blocked
+    /// byte differs between `src` and `dest`.
     ///
     /// Storage polarity: 0xFF = blocked, 0x00 = writable.
-    /// Uses u64 chunks: `(mask & src) != (mask & dest)` means blocked bytes differ -> reject.
+    /// Full u64 chunks use bitwise validation; any trailing bytes (len % 8) are checked
+    /// individually.
     #[inline]
-    pub fn apply_masked_update(
-        &self,
-        dest: &mut [u8; AUX_DATA_SIZE],
-        src: &[u8; AUX_DATA_SIZE],
-    ) -> bool {
-        // Pass 1: validate all 8-byte chunks
-        for i in 0..(AUX_DATA_SIZE / 8) {
+    pub fn apply_masked_update(&self, dest: &mut [u8; AUX_DATA_SIZE], src: &[u8]) -> bool {
+        let len = src.len();
+        if len > AUX_DATA_SIZE {
+            return false;
+        }
+        let full_chunks = len / 8;
+        // Pass 1a: validate u64-aligned chunks
+        for i in 0..full_chunks {
             let off = i * 8;
             let src_qw = u64::from_ne_bytes(src[off..off + 8].try_into().unwrap());
             let dest_qw = u64::from_ne_bytes(dest[off..off + 8].try_into().unwrap());
@@ -397,8 +405,14 @@ impl Mask {
                 return false;
             }
         }
-        // Pass 2: copy (blocked bytes are equal, so full copy is safe)
-        dest.copy_from_slice(src);
+        // Pass 1b: validate tail (len % 8 bytes)
+        for i in (full_chunks * 8)..len {
+            if src[i] != dest[i] && self.0[i] == 0xFF {
+                return false;
+            }
+        }
+        // Pass 2: copy only src bytes
+        dest[..len].copy_from_slice(src);
         true
     }
 }
@@ -646,5 +660,84 @@ mod tests {
         let mut src2 = dest;
         src2[2] = 0xFF; // blocked
         assert!(!bitmask.apply_masked_update(&mut dest, &src2));
+    }
+
+    #[test]
+    fn test_apply_masked_update_short_src() {
+        let mut bitmask = Mask::ALL_BLOCKED;
+        for i in 0..200 {
+            bitmask.allow(i);
+        }
+
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let mut src = [0u8; 200];
+        src[0] = 0xAA;
+        src[199] = 0xBB;
+
+        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert_eq!(dest[0], 0xAA);
+        assert_eq!(dest[199], 0xBB);
+        assert_eq!(dest[200], 0); // untouched
+    }
+
+    #[test]
+    fn test_apply_masked_update_misaligned_tail() {
+        let mut bitmask = Mask::ALL_BLOCKED;
+        for i in 0..7 {
+            bitmask.allow(i);
+        }
+
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let src = [0x11u8; 7]; // 7 bytes = 0 full chunks + 7 tail bytes
+
+        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        for i in 0..7 {
+            assert_eq!(dest[i], 0x11);
+        }
+        assert_eq!(dest[7], 0);
+    }
+
+    #[test]
+    fn test_apply_masked_update_tail_blocked() {
+        let mut bitmask = Mask::ALL_BLOCKED;
+        for i in 0..6 {
+            bitmask.allow(i);
+        }
+        // byte 6 is blocked
+
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let mut src = [0u8; 7];
+        src[6] = 0xFF; // try to write blocked tail byte
+
+        assert!(!bitmask.apply_masked_update(&mut dest, &src));
+    }
+
+    #[test]
+    fn test_apply_masked_update_single_byte() {
+        let mut bitmask = Mask::ALL_BLOCKED;
+        bitmask.allow(0);
+
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let src = [0xAA];
+
+        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert_eq!(dest[0], 0xAA);
+    }
+
+    #[test]
+    fn test_apply_masked_update_oversized_src_rejected() {
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let src = [0u8; AUX_DATA_SIZE + 1];
+
+        assert!(!Mask::ALL_WRITABLE.apply_masked_update(&mut dest, &src));
+    }
+
+    #[test]
+    fn test_apply_masked_update_empty_src() {
+        let mut dest = [0xABu8; AUX_DATA_SIZE];
+        let original = dest;
+        let mask = Mask::ALL_BLOCKED;
+        assert!(mask.apply_masked_update(&mut dest, &[]));
+        assert_eq!(dest, original);
     }
 }

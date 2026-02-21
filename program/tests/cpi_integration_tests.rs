@@ -1,13 +1,13 @@
 mod common;
 
-use c_u_soon::{Envelope, Mask, AUX_DATA_SIZE};
+use c_u_soon::{Envelope, Mask};
 use c_u_soon_client::{
     set_delegated_program_instruction_data, update_auxiliary_force_instruction_data,
     update_auxiliary_instruction_data,
 };
 use common::{
     create_delegated_envelope, create_existing_envelope, create_funded_account, new_mollusk,
-    PROGRAM_ID, PROGRAM_PATH,
+    PROGRAM_ID, PROGRAM_PATH, TEST_META_U64, TEST_TYPE_SIZE,
 };
 use mollusk_svm::program::create_program_account_loader_v3;
 use mollusk_svm::result::Check;
@@ -58,13 +58,13 @@ fn test_delegated_bitmask_enforcement() {
         user_bitmask,
     );
 
-    let mut data = [0u8; AUX_DATA_SIZE];
+    let mut data = [0u8; TEST_TYPE_SIZE];
     data[0] = 0xAA; // Allowed (byte 0)
     data[1] = 0xBB; // NOT allowed (byte 1)
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -138,12 +138,12 @@ fn test_force_update_increments_sequences() {
         Mask::ALL_WRITABLE,
     );
 
-    let mut data = [0u8; AUX_DATA_SIZE];
+    let mut data = [0u8; TEST_TYPE_SIZE];
     data[0] = 99;
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(5, 3, data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 5, 3, &data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -182,25 +182,33 @@ fn byte_writer_fast_path_ix_data(oracle_meta: u64, sequence: u64, payload: &[u8]
     v
 }
 
-fn byte_writer_slow_path_ix_data(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(1 + 8 + 256);
+fn byte_writer_slow_path_ix_data(metadata: u64, sequence: u64, aux_data: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + 8 + aux_data.len());
     v.push(0x01); // UpdateViaSlowPath
+    v.extend_from_slice(&metadata.to_le_bytes());
     v.extend_from_slice(&sequence.to_le_bytes());
     v.extend_from_slice(aux_data);
     v
 }
 
-fn byte_writer_delegated_ix_data(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(1 + 8 + 256);
+fn byte_writer_delegated_ix_data(metadata: u64, sequence: u64, aux_data: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + 8 + aux_data.len());
     v.push(0x02); // UpdateViaDelegated
+    v.extend_from_slice(&metadata.to_le_bytes());
     v.extend_from_slice(&sequence.to_le_bytes());
     v.extend_from_slice(aux_data);
     v
 }
 
-fn byte_writer_force_ix_data(auth_seq: u64, prog_seq: u64, aux_data: &[u8; 256]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(1 + 8 + 8 + 256);
+fn byte_writer_force_ix_data(
+    metadata: u64,
+    auth_seq: u64,
+    prog_seq: u64,
+    aux_data: &[u8],
+) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + 8 + 8 + aux_data.len());
     v.push(0x03); // UpdateViaForce
+    v.extend_from_slice(&metadata.to_le_bytes());
     v.extend_from_slice(&auth_seq.to_le_bytes());
     v.extend_from_slice(&prog_seq.to_le_bytes());
     v.extend_from_slice(aux_data);
@@ -228,17 +236,19 @@ fn attacker_fast_path_wrong_authority(oracle_meta: u64, sequence: u64, payload: 
     v
 }
 
-fn attacker_slow_path_without_pda_signer(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(1 + 8 + 256);
+fn attacker_slow_path_without_pda_signer(metadata: u64, sequence: u64, aux_data: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + 8 + aux_data.len());
     v.push(0x03); // SlowPathWithoutPdaSigner
+    v.extend_from_slice(&metadata.to_le_bytes());
     v.extend_from_slice(&sequence.to_le_bytes());
     v.extend_from_slice(aux_data);
     v
 }
 
-fn attacker_wrong_delegation_authority(sequence: u64, aux_data: &[u8; 256]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(1 + 8 + 256);
+fn attacker_wrong_delegation_authority(metadata: u64, sequence: u64, aux_data: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + 8 + aux_data.len());
     v.push(0x02); // WrongDelegationAuthority
+    v.extend_from_slice(&metadata.to_le_bytes());
     v.extend_from_slice(&sequence.to_le_bytes());
     v.extend_from_slice(aux_data);
     v
@@ -300,10 +310,10 @@ fn test_cpi_slow_path_via_byte_writer() {
     let pda = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let mut aux_data = [0u8; 256];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xCC;
-    aux_data[255] = 0xDD;
-    let ix_data = byte_writer_slow_path_ix_data(1, &aux_data);
+    aux_data[TEST_TYPE_SIZE - 1] = 0xDD;
+    let ix_data = byte_writer_slow_path_ix_data(TEST_META_U64, 1, &aux_data);
 
     let instruction = Instruction::new_with_bytes(
         BYTE_WRITER_ID,
@@ -341,7 +351,7 @@ fn test_cpi_slow_path_via_byte_writer() {
     );
     assert_eq!(env.authority_aux_sequence, 1);
     assert_eq!(env.auxiliary_data[0], 0xCC);
-    assert_eq!(env.auxiliary_data[255], 0xDD);
+    assert_eq!(env.auxiliary_data[TEST_TYPE_SIZE - 1], 0xDD);
 }
 
 #[test]
@@ -351,19 +361,19 @@ fn test_cpi_delegated_via_byte_writer() {
 
     let authority = Address::new_unique();
     let delegation_authority = Address::new_unique();
-    let padding = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
+    let padding = Address::new_unique();
 
-    let mut aux_data = [0u8; 256];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xEE;
-    let ix_data = byte_writer_delegated_ix_data(1, &aux_data);
+    let ix_data = byte_writer_delegated_ix_data(TEST_META_U64, 1, &aux_data);
 
     let instruction = Instruction::new_with_bytes(
         BYTE_WRITER_ID,
         &ix_data,
         vec![
-            AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(delegation_authority, true),
+            AccountMeta::new(envelope_pubkey, false),
             AccountMeta::new_readonly(padding, false),
             AccountMeta::new_readonly(PROGRAM_ID, false),
         ],
@@ -372,6 +382,7 @@ fn test_cpi_delegated_via_byte_writer() {
     let result = mollusk.process_and_validate_instruction(
         &instruction,
         &[
+            (delegation_authority, create_funded_account(1_000_000_000)),
             (
                 envelope_pubkey,
                 create_delegated_envelope(
@@ -381,7 +392,6 @@ fn test_cpi_delegated_via_byte_writer() {
                     Mask::ALL_BLOCKED,
                 ),
             ),
-            (delegation_authority, create_funded_account(1_000_000_000)),
             (padding, create_funded_account(0)),
             (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
         ],
@@ -389,7 +399,7 @@ fn test_cpi_delegated_via_byte_writer() {
     );
 
     let env: &Envelope = bytemuck::from_bytes(
-        &result.resulting_accounts[0].1.data[..core::mem::size_of::<Envelope>()],
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
     );
     assert_eq!(env.program_aux_sequence, 1);
     assert_eq!(env.auxiliary_data[0], 0xEE);
@@ -404,10 +414,10 @@ fn test_cpi_force_via_byte_writer() {
     let delegation_authority = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let mut aux_data = [0u8; 256];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xFF;
     aux_data[127] = 0xAA;
-    let ix_data = byte_writer_force_ix_data(1, 1, &aux_data);
+    let ix_data = byte_writer_force_ix_data(TEST_META_U64, 1, 1, &aux_data);
 
     let instruction = Instruction::new_with_bytes(
         BYTE_WRITER_ID,
@@ -533,8 +543,8 @@ fn test_cpi_attack_slow_path_without_pda_signer() {
     let fake_pda = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
 
-    let aux_data = [0u8; 256];
-    let ix_data = attacker_slow_path_without_pda_signer(1, &aux_data);
+    let aux_data = [0u8; TEST_TYPE_SIZE];
+    let ix_data = attacker_slow_path_without_pda_signer(TEST_META_U64, 1, &aux_data);
     let instruction = Instruction::new_with_bytes(
         ATTACKER_PROBE_ID,
         &ix_data,
@@ -567,12 +577,12 @@ fn test_cpi_attack_wrong_delegation_authority() {
     let authority = Address::new_unique();
     let real_delegation = Address::new_unique();
     let wrong_delegation = Address::new_unique();
-    let padding = Address::new_unique();
     let envelope_pubkey = Address::new_unique();
+    let padding = Address::new_unique();
 
-    let aux_data = [0u8; 256];
-    let ix_data = attacker_wrong_delegation_authority(1, &aux_data);
-    // Account order changed in b1b7448: [0]=wrong_delegation, [1]=envelope (was reversed)
+    let aux_data = [0u8; TEST_TYPE_SIZE];
+    let ix_data = attacker_wrong_delegation_authority(TEST_META_U64, 1, &aux_data);
+    // Accounts: [0]=wrong_delegation(signer), [1]=envelope(writable), [2]=padding, [3]=c_u_soon_program
     let instruction = Instruction::new_with_bytes(
         ATTACKER_PROBE_ID,
         &ix_data,

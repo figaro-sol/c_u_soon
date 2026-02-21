@@ -77,6 +77,10 @@ pub const PROGRAM_PATH: &str = concat!(
     "/../target/deploy/c_u_soon_program"
 );
 
+pub const TEST_TYPE_SIZE: usize = 200;
+pub const TEST_META: StructMetadata = StructMetadata::new(TEST_TYPE_SIZE as u8, 0);
+pub const TEST_META_U64: u64 = TEST_META.as_u64();
+
 pub const PROGRAM_ID: Address = Address::new_from_array([
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
     0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
@@ -118,7 +122,7 @@ pub fn create_existing_envelope_with_bump(authority: &Address, seq: u64, bump: u
         user_bitmask: Mask::ALL_BLOCKED,
         authority_aux_sequence: 0,
         program_aux_sequence: 0,
-        auxiliary_metadata: StructMetadata::ZERO,
+        auxiliary_metadata: TEST_META,
         auxiliary_data: [0u8; AUX_DATA_SIZE],
     };
     Account {
@@ -151,7 +155,7 @@ pub fn create_delegated_envelope(
         user_bitmask,
         authority_aux_sequence: 0,
         program_aux_sequence: 0,
-        auxiliary_metadata: StructMetadata::ZERO,
+        auxiliary_metadata: TEST_META,
         auxiliary_data: [0u8; AUX_DATA_SIZE],
     };
     Account {

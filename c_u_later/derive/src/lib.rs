@@ -30,10 +30,8 @@ use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Type};
 /// # Generated items
 ///
 /// - `impl CuLaterMask for MyStruct`: `program_mask()` and `authority_mask()` each return
-///   `[bool; AUX_SIZE]` where `true` = writable, `false` = blocked.
-/// - `impl TypeHash for MyStruct`: seeded with `"__struct_init__"` instead of the struct
-///   name, so the hash differs from a standalone `#[derive(TypeHash)]` on the same type.
-/// - A const assertion that `size_of::<MyStruct>() <= AUX_SIZE` (256 bytes).
+///   `Vec<bool>` of length `size_of::<MyStruct>()` where `true` = writable, `false` = blocked.
+/// - A const assertion that `size_of::<MyStruct>() <= AUX_SIZE` (255 bytes).
 ///
 /// # Requirements
 ///
@@ -212,29 +210,29 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
         };
 
         #[doc(hidden)]
-        fn #program_mask_fn() -> [bool; ::c_u_later::AUX_SIZE] {
+        fn #program_mask_fn() -> ::c_u_later::__private::Vec<bool> {
             #[allow(unused_imports)]
             use ::c_u_later::IsNotCuLater as _;
-            let mut mask = [false; ::c_u_later::AUX_SIZE];
+            let mut mask = ::c_u_later::__private::vec![false; ::core::mem::size_of::<#name>()];
             #(#program_mask_parts)*
             mask
         }
 
         #[doc(hidden)]
-        fn #authority_mask_fn() -> [bool; ::c_u_later::AUX_SIZE] {
+        fn #authority_mask_fn() -> ::c_u_later::__private::Vec<bool> {
             #[allow(unused_imports)]
             use ::c_u_later::IsNotCuLater as _;
-            let mut mask = [false; ::c_u_later::AUX_SIZE];
+            let mut mask = ::c_u_later::__private::vec![false; ::core::mem::size_of::<#name>()];
             #(#authority_mask_parts)*
             mask
         }
 
         impl ::c_u_later::CuLaterMask for #name {
-            fn program_mask() -> [bool; ::c_u_later::AUX_SIZE] {
+            fn program_mask() -> ::c_u_later::__private::Vec<bool> {
                 #program_mask_fn()
             }
 
-            fn authority_mask() -> [bool; ::c_u_later::AUX_SIZE] {
+            fn authority_mask() -> ::c_u_later::__private::Vec<bool> {
                 #authority_mask_fn()
             }
         }

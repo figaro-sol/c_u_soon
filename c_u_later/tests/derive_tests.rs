@@ -21,6 +21,9 @@ fn test_simple_struct_masks() {
     let program_mask = Simple::program_mask();
     let authority_mask = Simple::authority_mask();
 
+    assert_eq!(program_mask.len(), core::mem::size_of::<Simple>());
+    assert_eq!(authority_mask.len(), core::mem::size_of::<Simple>());
+
     for i in 0..4 {
         assert!(!program_mask[i], "program should not write byte {}", i);
         assert!(!authority_mask[i], "authority should not write byte {}", i);
@@ -50,6 +53,7 @@ fn test_array_field() {
     }
 
     let program_mask = WithArray::program_mask();
+    assert_eq!(program_mask.len(), core::mem::size_of::<WithArray>());
 
     for i in 0..4 {
         assert!(!program_mask[i], "header byte {} should be constant", i);
@@ -528,29 +532,29 @@ fn test_array_monomorph_independence() {
     let m8 = <[u8; 8]>::program_mask();
     let m16_2 = <[u16; 2]>::program_mask();
 
+    assert_eq!(m4.len(), 4);
     for i in 0..4 {
         assert!(m4[i], "[u8; 4] bit {}", i);
     }
-    assert!(!m4[4]);
 
+    assert_eq!(m8.len(), 8);
     for i in 0..8 {
         assert!(m8[i], "[u8; 8] bit {}", i);
     }
-    assert!(!m8[8]);
 
+    assert_eq!(m16_2.len(), 4);
     for i in 0..4 {
         assert!(m16_2[i], "[u16; 2] bit {}", i);
     }
-    assert!(!m16_2[4]);
 }
 
 #[test]
 fn test_nested_arrays() {
     let mask = <[[u16; 2]; 2]>::program_mask();
+    assert_eq!(mask.len(), 8);
     for i in 0..8 {
         assert!(mask[i], "bit {} should be set", i);
     }
-    assert!(!mask[8]);
 }
 
 #[test]
@@ -787,7 +791,7 @@ fn wire_mask_big_struct_allowed() {
     struct Big {
         #[program]
         data: [u8; 200],
-        rest: [u8; 56],
+        rest: [u8; 55],
     }
 
     let wire = c_u_later::to_program_wire_mask::<Big>();

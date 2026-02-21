@@ -18,11 +18,11 @@ use pinocchio::{
 ///   Accounts: [0]=wrong_authority(signer), [1]=envelope(writable), [2]=c_u_soon_program
 ///   Attack: passes wrong authority (different from envelope.authority) → c_u_soon rejects IncorrectAuthority
 ///
-/// 0x02: WrongDelegationAuthority [seq: u64 LE][aux_data: 256 bytes]
+/// 0x02: WrongDelegationAuthority [metadata: u64 LE][seq: u64 LE][data: rest]
 ///   Accounts: [0]=wrong_delegation(signer), [1]=envelope(writable), [2]=padding, [3]=c_u_soon_program
 ///   Attack: wrong delegation_authority → c_u_soon rejects IncorrectAuthority
 ///
-/// 0x03: SlowPathWithoutPdaSigner [seq: u64 LE][aux_data: 256 bytes]
+/// 0x03: SlowPathWithoutPdaSigner [metadata: u64 LE][seq: u64 LE][data: rest]
 ///   Accounts: [0]=authority(signer), [1]=envelope(writable), [2]=padding(NOT signer), [3]=c_u_soon_program
 ///   Attack: UpdateAuxiliary without delegation → c_u_soon rejects InvalidArgument
 ///
@@ -72,20 +72,24 @@ pub fn process_instruction(
             fast_path_with_wrong_authority(accounts, oracle_meta, sequence, payload)
         }
         0x02 => {
-            if instruction_data.len() < 1 + 8 + 256 {
+            // [metadata:8][seq:8][data:rest]
+            if instruction_data.len() < 17 {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            let aux_data = &instruction_data[9..9 + 256];
-            wrong_delegation_authority(accounts, sequence, aux_data)
+            let metadata = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let sequence = u64::from_le_bytes(instruction_data[9..17].try_into().unwrap());
+            let data = &instruction_data[17..];
+            wrong_delegation_authority(accounts, metadata, sequence, data)
         }
         0x03 => {
-            if instruction_data.len() < 1 + 8 + 256 {
+            // [metadata:8][seq:8][data:rest]
+            if instruction_data.len() < 17 {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let sequence = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            let aux_data = &instruction_data[9..9 + 256];
-            slow_path_without_pda_signer(accounts, sequence, aux_data)
+            let metadata = u64::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let sequence = u64::from_le_bytes(instruction_data[9..17].try_into().unwrap());
+            let data = &instruction_data[17..];
+            slow_path_without_pda_signer(accounts, metadata, sequence, data)
         }
         0x04 => {
             if instruction_data.len() < 18 {
@@ -167,56 +171,68 @@ fn fast_path_with_wrong_authority(
 }
 
 /// ATTACK: UpdateAuxiliaryDelegated with wrong delegation authority.
+/// Wire: [disc:4][metadata:8][sequence:8][data:N]
+/// Accounts: [delegation_auth(signer), envelope(writable), padding]
 fn wrong_delegation_authority(
     accounts: &[AccountView],
+    metadata: u64,
     sequence: u64,
-    aux_data: &[u8],
+    data: &[u8],
 ) -> ProgramResult {
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut ix_data = [0u8; 4 + 8 + 256];
-    ix_data[..4].copy_from_slice(&5u32.to_le_bytes()); // UpdateAuxiliaryDelegated
-    ix_data[4..12].copy_from_slice(&sequence.to_le_bytes());
-    ix_data[12..268].copy_from_slice(&aux_data[..256]);
+    let data_len = data.len();
+    let total = 20 + data_len;
+    let mut ix_data = [0u8; 275]; // 4 + 8 + 8 + 255 max
+    ix_data[..4].copy_from_slice(&5u32.to_le_bytes()); // UPDATE_AUX_DELEGATED_TAG
+    ix_data[4..12].copy_from_slice(&metadata.to_le_bytes());
+    ix_data[12..20].copy_from_slice(&sequence.to_le_bytes());
+    ix_data[20..20 + data_len].copy_from_slice(data);
 
     let cpi_accounts = [
-        InstructionAccount::readonly_signer(accounts[0].address()),  // wrong delegation, signer
+        InstructionAccount::readonly_signer(accounts[0].address()), // wrong delegation, signer
         InstructionAccount::writable(accounts[1].address()),         // envelope, writable
         InstructionAccount::readonly(accounts[2].address()),         // padding
     ];
     let instruction = InstructionView {
         program_id: accounts[3].address(),
         accounts: &cpi_accounts,
-        data: &ix_data,
+        data: &ix_data[..total],
     };
     invoke(&instruction, &[&accounts[0], &accounts[1], &accounts[2]])
 }
 
 /// ATTACK: UpdateAuxiliary without delegation.
+/// Wire: [disc:4][metadata:8][sequence:8][data:N]
+/// Accounts: [authority(signer), envelope(writable), pda(NOT signer)]
 fn slow_path_without_pda_signer(
     accounts: &[AccountView],
+    metadata: u64,
     sequence: u64,
-    aux_data: &[u8],
+    data: &[u8],
 ) -> ProgramResult {
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    let mut ix_data = [0u8; 4 + 8 + 256];
-    ix_data[..4].copy_from_slice(&4u32.to_le_bytes()); // UpdateAuxiliary
-    ix_data[4..12].copy_from_slice(&sequence.to_le_bytes());
-    ix_data[12..268].copy_from_slice(&aux_data[..256]);
+    let data_len = data.len();
+    let total = 20 + data_len;
+    let mut ix_data = [0u8; 275]; // 4 + 8 + 8 + 255 max
+    ix_data[..4].copy_from_slice(&4u32.to_le_bytes()); // UPDATE_AUX_TAG
+    ix_data[4..12].copy_from_slice(&metadata.to_le_bytes());
+    ix_data[12..20].copy_from_slice(&sequence.to_le_bytes());
+    ix_data[20..20 + data_len].copy_from_slice(data);
 
     // Attack: UpdateAuxiliary on envelope without delegation
     let cpi_accounts = [
-        InstructionAccount::readonly_signer(accounts[0].address()),  // authority, signer
-        InstructionAccount::writable(accounts[1].address()),          // envelope, writable
-        InstructionAccount::readonly(accounts[2].address()),          // padding
+        InstructionAccount::readonly_signer(accounts[0].address()), // authority, signer
+        InstructionAccount::writable(accounts[1].address()),         // envelope, writable
+        InstructionAccount::readonly(accounts[2].address()),         // padding
     ];
     let instruction = InstructionView {
         program_id: accounts[3].address(),
         accounts: &cpi_accounts,
-        data: &ix_data,
+        data: &ix_data[..total],
     };
     invoke(&instruction, &[&accounts[0], &accounts[1], &accounts[2]])
 }

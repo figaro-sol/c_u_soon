@@ -1,7 +1,7 @@
 mod common;
 
 use bytemuck::Zeroable;
-use c_u_soon::{Envelope, Mask, AUX_DATA_SIZE};
+use c_u_soon::{Envelope, Mask};
 use c_u_soon_client::{
     clear_delegation_instruction_data, set_delegated_program_instruction_data,
     update_auxiliary_delegated_instruction_data, update_auxiliary_force_instruction_data,
@@ -9,7 +9,7 @@ use c_u_soon_client::{
 };
 use common::{
     create_delegated_envelope, create_existing_envelope, create_funded_account, new_mollusk,
-    PROGRAM_ID, PROGRAM_PATH,
+    PROGRAM_ID, PROGRAM_PATH, TEST_META_U64, TEST_TYPE_SIZE,
 };
 use mollusk_svm::result::Check;
 use pinocchio::{error::ProgramError, Address};
@@ -146,7 +146,7 @@ fn test_clear_delegation_happy_path() {
     assert_eq!(env.user_bitmask, Mask::ALL_BLOCKED);
     // Verify oracle_state.data and auxiliary_data are zeroed
     assert_eq!(env.oracle_state.data, [0u8; c_u_soon::ORACLE_BYTES]);
-    assert_eq!(env.auxiliary_data, [0u8; AUX_DATA_SIZE]);
+    assert_eq!(env.auxiliary_data, [0u8; c_u_soon::AUX_DATA_SIZE]);
 }
 
 #[test]
@@ -169,13 +169,13 @@ fn test_update_auxiliary_with_delegation_applies_bitmask() {
         user_bitmask,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xAA;
     aux_data[1] = 0xBB;
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -215,13 +215,13 @@ fn test_update_auxiliary_delegated_happy_path() {
         user_bitmask,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xCC;
     aux_data[50] = 0xDD;
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_delegated_instruction_data(1, aux_data).unwrap(),
+        &update_auxiliary_delegated_instruction_data(TEST_META_U64, 1, &aux_data),
         vec![
             AccountMeta::new_readonly(delegation_authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -262,12 +262,12 @@ fn test_update_auxiliary_force_happy_path() {
         Mask::ALL_WRITABLE,
     );
 
-    let mut aux_data = [0u8; AUX_DATA_SIZE];
+    let mut aux_data = [0u8; TEST_TYPE_SIZE];
     aux_data[0] = 0xEE;
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(5, 10, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 5, 10, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -302,12 +302,12 @@ fn test_update_auxiliary_force_fails_without_delegation() {
 
     let envelope = create_existing_envelope(&authority, 0);
 
-    let aux_data = [0u8; AUX_DATA_SIZE];
+    let aux_data = [0u8; TEST_TYPE_SIZE];
     let delegation_authority = Address::new_unique();
 
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_force_instruction_data(5, 10, aux_data).unwrap(),
+        &update_auxiliary_force_instruction_data(TEST_META_U64, 5, 10, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
@@ -345,12 +345,12 @@ fn test_sequence_monotonically_increases() {
     let envelope: &mut Envelope = bytemuck::from_bytes_mut(&mut envelope_account.data);
     envelope.authority_aux_sequence = 20;
 
-    let aux_data = [0xAAu8; AUX_DATA_SIZE];
+    let aux_data = [0xAAu8; TEST_TYPE_SIZE];
 
     // Try to write with sequence <= current sequence (10 <= 20)
     let instruction = Instruction::new_with_bytes(
         PROGRAM_ID,
-        &update_auxiliary_instruction_data(10, aux_data).unwrap(),
+        &update_auxiliary_instruction_data(TEST_META_U64, 10, &aux_data),
         vec![
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(envelope_pubkey, false),
