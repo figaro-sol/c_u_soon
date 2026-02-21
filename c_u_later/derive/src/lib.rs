@@ -74,6 +74,7 @@ pub fn derive_cu_later(input: TokenStream) -> TokenStream {
 
 fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
+    let vis = &input.vis;
 
     if !has_repr_c(&input.attrs) {
         return Err(syn::Error::new(
@@ -197,6 +198,9 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect();
 
+    let program_wrapper = generate_wrapper(name, vis, &field_infos, "Program", true);
+    let authority_wrapper = generate_wrapper(name, vis, &field_infos, "Authority", false);
+
     let name_snake = to_snake_case(&name.to_string());
     let program_mask_fn = format_ident!("__cu_later_program_mask_{}", name_snake);
     let authority_mask_fn = format_ident!("__cu_later_authority_mask_{}", name_snake);
@@ -234,6 +238,9 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #authority_mask_fn()
             }
         }
+
+        #program_wrapper
+        #authority_wrapper
     };
 
     Ok(expanded)
@@ -283,4 +290,108 @@ fn to_snake_case(s: &str) -> String {
         }
     }
     result
+}
+
+const PRIMITIVE_NAMES: &[&str] = &[
+    "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128", "f32", "f64", "bool",
+];
+
+fn is_primitive_or_array(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => {
+            if let Some(ident) = type_path.path.get_ident() {
+                let s = ident.to_string();
+                return PRIMITIVE_NAMES.contains(&s.as_str());
+            }
+            false
+        }
+        Type::Array(_) => true,
+        _ => false,
+    }
+}
+
+fn is_padding_field(name: &syn::Ident) -> bool {
+    name.to_string().starts_with('_')
+}
+
+fn build_wrapper_path(ty: &Type, suffix: &str) -> Option<syn::Path> {
+    if let Type::Path(type_path) = ty {
+        let mut path = type_path.path.clone();
+        if let Some(last) = path.segments.last_mut() {
+            last.ident = format_ident!("{}{}", last.ident, suffix);
+            last.arguments = syn::PathArguments::None;
+        }
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn generate_wrapper(
+    struct_name: &syn::Ident,
+    vis: &syn::Visibility,
+    fields: &[FieldInfo],
+    suffix: &str,
+    is_program: bool,
+) -> TokenStream2 {
+    let wrapper_name = format_ident!("{}{}", struct_name, suffix);
+
+    let mut accessors = Vec::new();
+
+    for field in fields {
+        let included = if is_program {
+            field.has_program
+        } else {
+            field.has_authority
+        };
+        if !included || is_padding_field(&field.name) {
+            continue;
+        }
+
+        let field_name = &field.name;
+        let accessor_name = format_ident!("{}_mut", field_name);
+        let field_ty = &field.ty;
+
+        if !field.has_embed && !is_primitive_or_array(field_ty) {
+            if let Some(wrapper_path) = build_wrapper_path(field_ty, suffix) {
+                accessors.push(quote! {
+                    #vis fn #accessor_name(&mut self) -> #wrapper_path<'_> {
+                        #wrapper_path::from_mut(&mut self.0.#field_name)
+                    }
+                });
+            } else {
+                accessors.push(quote! {
+                    #vis fn #accessor_name(&mut self) -> &mut #field_ty {
+                        &mut self.0.#field_name
+                    }
+                });
+            }
+        } else {
+            accessors.push(quote! {
+                #vis fn #accessor_name(&mut self) -> &mut #field_ty {
+                    &mut self.0.#field_name
+                }
+            });
+        }
+    }
+
+    quote! {
+        #vis struct #wrapper_name<'a>(&'a mut #struct_name);
+
+        impl ::core::ops::Deref for #wrapper_name<'_> {
+            type Target = #struct_name;
+
+            fn deref(&self) -> &#struct_name {
+                &*self.0
+            }
+        }
+
+        impl<'a> #wrapper_name<'a> {
+            #vis fn from_mut(inner: &'a mut #struct_name) -> Self {
+                Self(inner)
+            }
+
+            #(#accessors)*
+        }
+    }
 }

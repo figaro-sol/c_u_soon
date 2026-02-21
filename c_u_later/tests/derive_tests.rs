@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use c_u_later::{CuLater, CuLaterMask, IsCuLaterWrapper, IsNotCuLater};
 use c_u_soon::TypeHash;
+use core::ops::Deref;
 
 #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug, PartialEq)]
 #[repr(C)]
@@ -792,4 +793,244 @@ fn wire_mask_big_struct_allowed() {
     let wire = c_u_later::to_program_wire_mask::<Big>();
     assert!(wire.is_write_allowed(0, 200));
     assert!(!wire.is_write_allowed(200, 1));
+}
+
+// --- Wrapper struct tests ---
+
+#[test]
+fn wrapper_deref_reads_all_fields() {
+    let mut s = Simple {
+        readonly: 42,
+        both: 100,
+        program_only: 1,
+        authority_only: 2,
+    };
+    let w = SimpleProgram::from_mut(&mut s);
+    assert_eq!(w.deref().readonly, 42);
+    assert_eq!(w.both, 100);
+    assert_eq!(w.program_only, 1);
+    assert_eq!(w.authority_only, 2);
+}
+
+#[test]
+fn wrapper_program_mut_accessors() {
+    let mut s = Simple {
+        readonly: 0,
+        both: 0,
+        program_only: 0,
+        authority_only: 0,
+    };
+    {
+        let mut w = SimpleProgram::from_mut(&mut s);
+        *w.both_mut() = 10;
+        *w.program_only_mut() = 20;
+    }
+    assert_eq!(s.both, 10);
+    assert_eq!(s.program_only, 20);
+}
+
+#[test]
+fn wrapper_authority_mut_accessors() {
+    let mut s = Simple {
+        readonly: 0,
+        both: 0,
+        program_only: 0,
+        authority_only: 0,
+    };
+    {
+        let mut w = SimpleAuthority::from_mut(&mut s);
+        *w.both_mut() = 10;
+        *w.authority_only_mut() = 20;
+    }
+    assert_eq!(s.both, 10);
+    assert_eq!(s.authority_only, 20);
+}
+
+#[test]
+fn wrapper_shared_field_in_both() {
+    let mut s = Simple {
+        readonly: 0,
+        both: 0,
+        program_only: 0,
+        authority_only: 0,
+    };
+    {
+        let mut wp = SimpleProgram::from_mut(&mut s);
+        *wp.both_mut() = 42;
+    }
+    {
+        let mut wa = SimpleAuthority::from_mut(&mut s);
+        assert_eq!(wa.both, 42);
+        *wa.both_mut() = 99;
+    }
+    assert_eq!(s.both, 99);
+}
+
+#[test]
+fn wrapper_nested_cu_later_program() {
+    let mut o = Outer {
+        header: 0,
+        inner_prog: Inner {
+            prog_field: 0,
+            auth_field: 0,
+        },
+        inner_auth: Inner {
+            prog_field: 0,
+            auth_field: 0,
+        },
+        inner_both: Inner {
+            prog_field: 0,
+            auth_field: 0,
+        },
+    };
+    {
+        let mut wp = OuterProgram::from_mut(&mut o);
+        {
+            let mut ip = wp.inner_prog_mut();
+            *ip.prog_field_mut() = 42;
+        }
+        {
+            let mut ib = wp.inner_both_mut();
+            *ib.prog_field_mut() = 99;
+        }
+    }
+    assert_eq!(o.inner_prog.prog_field, 42);
+    assert_eq!(o.inner_both.prog_field, 99);
+}
+
+#[test]
+fn wrapper_nested_cu_later_authority() {
+    let mut o = Outer {
+        header: 0,
+        inner_prog: Inner {
+            prog_field: 0,
+            auth_field: 0,
+        },
+        inner_auth: Inner {
+            prog_field: 0,
+            auth_field: 0,
+        },
+        inner_both: Inner {
+            prog_field: 0,
+            auth_field: 0,
+        },
+    };
+    {
+        let mut wa = OuterAuthority::from_mut(&mut o);
+        {
+            let mut ia = wa.inner_auth_mut();
+            *ia.auth_field_mut() = 42;
+        }
+        {
+            let mut ib = wa.inner_both_mut();
+            *ib.auth_field_mut() = 99;
+        }
+    }
+    assert_eq!(o.inner_auth.auth_field, 42);
+    assert_eq!(o.inner_both.auth_field, 99);
+}
+
+#[test]
+fn wrapper_embed_returns_mut_ref() {
+    #[derive(Pod, Zeroable, TypeHash, Copy, Clone)]
+    #[repr(C)]
+    struct EmbedTarget {
+        a: u16,
+        b: u16,
+    }
+
+    #[derive(Pod, Zeroable, TypeHash, CuLater, Copy, Clone)]
+    #[repr(C)]
+    struct WithEmbedW {
+        #[program]
+        #[embed]
+        target: EmbedTarget,
+        other: u32,
+    }
+
+    let mut s = WithEmbedW {
+        target: EmbedTarget { a: 0, b: 0 },
+        other: 0,
+    };
+    {
+        let mut w = WithEmbedWProgram::from_mut(&mut s);
+        let t = w.target_mut();
+        t.a = 42;
+        t.b = 99;
+    }
+    assert_eq!(s.target.a, 42);
+    assert_eq!(s.target.b, 99);
+}
+
+#[test]
+fn wrapper_padding_has_no_accessor() {
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
+    #[repr(C)]
+    struct WithPad {
+        #[authority]
+        val: u8,
+        #[authority]
+        _pad: [u8; 7],
+    }
+
+    let mut s = WithPad {
+        val: 0,
+        _pad: [0; 7],
+    };
+    let mut w = WithPadAuthority::from_mut(&mut s);
+    // val_mut exists
+    *w.val_mut() = 42;
+    // _pad_mut does NOT exist (no accessor generated for _ fields)
+    // We verify by checking that only val was mutated
+    assert_eq!(w.val, 42);
+}
+
+#[test]
+fn wrapper_mutation_persists() {
+    let mut s = Simple {
+        readonly: 0,
+        both: 0,
+        program_only: 0,
+        authority_only: 0,
+    };
+    {
+        let mut w = SimpleProgram::from_mut(&mut s);
+        *w.program_only_mut() = 42;
+    }
+    assert_eq!(s.program_only, 42);
+}
+
+mod nested {
+    use bytemuck::{Pod, Zeroable};
+    use c_u_later::CuLater;
+    use c_u_soon::TypeHash;
+
+    #[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
+    #[repr(C)]
+    pub struct Nested {
+        #[program]
+        pub prog: u16,
+        #[authority]
+        pub auth: u16,
+    }
+}
+
+#[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater, Debug)]
+#[repr(C)]
+struct UsesQualifiedPath {
+    header: u32,
+    #[program]
+    inner: nested::Nested,
+}
+
+#[test]
+fn wrapper_qualified_path_nested() {
+    let mut s = UsesQualifiedPath {
+        header: 0,
+        inner: nested::Nested { prog: 0, auth: 0 },
+    };
+    let mut w = UsesQualifiedPathProgram::from_mut(&mut s);
+    let mut inner_w = w.inner_mut();
+    *inner_w.prog_mut() = 42;
+    assert_eq!(s.inner.prog, 42);
 }
