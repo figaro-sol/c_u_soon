@@ -15,3 +15,4 @@ bytemuck = { workspace = true }
 
 [dev-dependencies]
 c_u_soon = { path = "../sdk", features = ["derive"] }
+trybuild = { version = "1", features = ["diff"] }

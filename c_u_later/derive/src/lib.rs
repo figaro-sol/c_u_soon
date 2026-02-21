@@ -5,7 +5,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Type};
 
-/// Derives [`c_u_later::CuLaterMask`] and [`c_u_soon::TypeHash`] for a `#[repr(C)]` struct.
+/// Derives [`c_u_later::CuLaterMask`] plus role-specific wrapper types for a `#[repr(C)]` struct.
 ///
 /// # Field attributes
 ///
@@ -31,6 +31,8 @@ use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Type};
 ///
 /// - `impl CuLaterMask for MyStruct`: `program_mask()` and `authority_mask()` each return
 ///   `Vec<bool>` of length `size_of::<MyStruct>()` where `true` = writable, `false` = blocked.
+/// - `MyStructProgram<'a>` and `MyStructAuthority<'a>` wrappers with mut accessors only for
+///   fields marked `#[program]` / `#[authority]`.
 /// - A const assertion that `size_of::<MyStruct>() <= AUX_SIZE` (255 bytes).
 ///
 /// # Requirements
@@ -196,8 +198,8 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect();
 
-    let program_wrapper = generate_wrapper(name, vis, &field_infos, "Program", true);
-    let authority_wrapper = generate_wrapper(name, vis, &field_infos, "Authority", false);
+    let program_wrapper = generate_wrapper(name, vis, &field_infos, "Program", true)?;
+    let authority_wrapper = generate_wrapper(name, vis, &field_infos, "Authority", false)?;
 
     let name_snake = to_snake_case(&name.to_string());
     let program_mask_fn = format_ident!("__cu_later_program_mask_{}", name_snake);
@@ -312,16 +314,25 @@ fn is_padding_field(name: &syn::Ident) -> bool {
     name.to_string().starts_with('_')
 }
 
-fn build_wrapper_path(ty: &Type, suffix: &str) -> Option<syn::Path> {
+fn build_wrapper_path(ty: &Type, suffix: &str) -> syn::Result<syn::Path> {
     if let Type::Path(type_path) = ty {
         let mut path = type_path.path.clone();
         if let Some(last) = path.segments.last_mut() {
+            if !matches!(last.arguments, syn::PathArguments::None) {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "CuLater: field type has generic arguments; generated wrapper types do not \
+                     carry type parameters. Use #[embed] for types that do not implement CuLater.",
+                ));
+            }
             last.ident = format_ident!("{}{}", last.ident, suffix);
-            last.arguments = syn::PathArguments::None;
         }
-        Some(path)
+        Ok(path)
     } else {
-        None
+        Err(syn::Error::new_spanned(
+            ty,
+            "CuLater: unsupported field type for wrapper generation (expected a named type path).",
+        ))
     }
 }
 
@@ -331,7 +342,7 @@ fn generate_wrapper(
     fields: &[FieldInfo],
     suffix: &str,
     is_program: bool,
-) -> TokenStream2 {
+) -> syn::Result<TokenStream2> {
     let wrapper_name = format_ident!("{}{}", struct_name, suffix);
 
     let mut accessors = Vec::new();
@@ -351,19 +362,12 @@ fn generate_wrapper(
         let field_ty = &field.ty;
 
         if !field.has_embed && !is_primitive_or_array(field_ty) {
-            if let Some(wrapper_path) = build_wrapper_path(field_ty, suffix) {
-                accessors.push(quote! {
-                    #vis fn #accessor_name(&mut self) -> #wrapper_path<'_> {
-                        #wrapper_path::from_mut(&mut self.0.#field_name)
-                    }
-                });
-            } else {
-                accessors.push(quote! {
-                    #vis fn #accessor_name(&mut self) -> &mut #field_ty {
-                        &mut self.0.#field_name
-                    }
-                });
-            }
+            let wrapper_path = build_wrapper_path(field_ty, suffix)?;
+            accessors.push(quote! {
+                #vis fn #accessor_name(&mut self) -> #wrapper_path<'_> {
+                    #wrapper_path::from_mut(&mut self.0.#field_name)
+                }
+            });
         } else {
             accessors.push(quote! {
                 #vis fn #accessor_name(&mut self) -> &mut #field_ty {
@@ -373,7 +377,7 @@ fn generate_wrapper(
         }
     }
 
-    quote! {
+    Ok(quote! {
         #vis struct #wrapper_name<'a>(&'a mut #struct_name);
 
         impl ::core::ops::Deref for #wrapper_name<'_> {
@@ -391,5 +395,5 @@ fn generate_wrapper(
 
             #(#accessors)*
         }
-    }
+    })
 }

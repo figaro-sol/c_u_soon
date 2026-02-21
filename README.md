@@ -36,7 +36,7 @@ let ix_data = fast_path_update_typed::<PriceData>(next_sequence, &price);
 sdk/              c_u_soon              core types (Envelope, Mask, TypeHash), no_std
 client/           c_u_soon_client       off-chain instruction builders
 instruction/      c_u_soon_instruction    shared instruction types
-cpi/              c_u_soon_cpi          on-chain CPI helpers (invoke_fast_path, invoke_update_*)
+cpi/              c_u_soon_cpi          on-chain CPI builders (FastPathUpdate, UpdateAuxiliary*, next_sequence)
 program/          c_u_soon_program      on-chain program (pinocchio)
 c_u_later/        c_u_later             compile-time permission masks for slow data
 c_u_later/derive/                       proc macro for CuLater
@@ -102,8 +102,9 @@ The `c_u_later` crate generates these masks from struct definitions:
 ```rust
 use c_u_later::CuLater;
 use bytemuck::{Pod, Zeroable};
+use c_u_soon::TypeHash;
 
-#[derive(Clone, Copy, Pod, Zeroable, CuLater)]
+#[derive(Clone, Copy, Pod, Zeroable, TypeHash, CuLater)]
 #[repr(C)]
 struct AmmState {
     #[program]
@@ -138,35 +139,128 @@ struct WithBlob {
 }
 ```
 
-## CPI from your program
-
-The `c_u_soon_cpi` crate provides on-chain CPI helpers.
-
-Update slow data as the delegated program:
+`CuLater` also generates role-specific wrappers to avoid cross-role writes in your own code:
 
 ```rust
-use c_u_soon_cpi::invoke_update_auxiliary_delegated;
+let mut aux = AmmState {
+    pool_price: 0,
+    fee_rate: 0,
+    shared_flag: 0,
+    _reserved: [0; 3],
+};
 
-invoke_update_auxiliary_delegated(envelope, delegation_auth, padding, c_u_soon_program, next_sequence, &new_data)?;
+{
+    let mut p = AmmStateProgram::from_mut(&mut aux);
+    *p.pool_price_mut() = 123;
+    *p.shared_flag_mut() = 1;
+    // p.fee_rate_mut() does not exist
+}
+
+{
+    let mut a = AmmStateAuthority::from_mut(&mut aux);
+    *a.fee_rate_mut() = 5;
+    *a.shared_flag_mut() = 2;
+    // a.pool_price_mut() does not exist
+}
 ```
+
+Before building a slow-path update, you can validate diffs off-chain:
+
+```rust
+use c_u_later::validation::{
+    diff_report, validate_authority_change, validate_program_change, verify_constants_unchanged,
+};
+
+let old_bytes = bytemuck::bytes_of(&old_aux);
+let new_bytes = bytemuck::bytes_of(&new_aux);
+
+assert!(validate_program_change::<AmmState>(old_bytes, new_bytes));
+assert!(verify_constants_unchanged::<AmmState>(old_bytes, new_bytes));
+let report = diff_report::<AmmState>(old_bytes, new_bytes);
+```
+
+## CPI from your program
+
+`c_u_soon_cpi` now uses struct-based CPI builders with `invoke()` / `invoke_signed()`.
+Use `next_sequence(current)` to safely increment counters (`ArithmeticOverflow` on overflow).
 
 Update slow data as the authority:
 
 ```rust
-use c_u_soon_cpi::invoke_update_auxiliary;
+use c_u_soon::TypeHash;
+use c_u_soon_cpi::{next_sequence, UpdateAuxiliary};
 
-invoke_update_auxiliary(authority, envelope, padding, c_u_soon_program, next_sequence, &new_data)?;
+let next = next_sequence(current_authority_aux_sequence)?;
+UpdateAuxiliary {
+    authority,
+    envelope,
+    pda, // caller PDA signer
+    program: c_u_soon_program,
+    metadata: AmmState::METADATA.as_u64(),
+    sequence: next,
+    data: bytemuck::bytes_of(&new_aux),
+}
+.invoke_signed(signers)?;
+```
+
+Update slow data as the delegated program:
+
+```rust
+use c_u_soon::TypeHash;
+use c_u_soon_cpi::{next_sequence, UpdateAuxiliaryDelegated};
+
+let next = next_sequence(current_program_aux_sequence)?;
+UpdateAuxiliaryDelegated {
+    delegation_auth,
+    envelope,
+    padding, // required third account for slow-path dispatch
+    program: c_u_soon_program,
+    metadata: AmmState::METADATA.as_u64(),
+    sequence: next,
+    data: bytemuck::bytes_of(&new_aux),
+}
+.invoke_signed(signers)?;
 ```
 
 Force update (both parties sign, no bitmask restriction):
 
 ```rust
-use c_u_soon_cpi::invoke_update_auxiliary_force;
+use c_u_soon::TypeHash;
+use c_u_soon_cpi::{next_sequence, UpdateAuxiliaryForce};
 
-invoke_update_auxiliary_force(authority, envelope, delegation_auth, c_u_soon_program, auth_sequence, prog_sequence, &new_data)?;
+UpdateAuxiliaryForce {
+    authority,
+    envelope,
+    delegation_auth,
+    program: c_u_soon_program,
+    metadata: AmmState::METADATA.as_u64(),
+    authority_sequence: next_sequence(current_authority_aux_sequence)?,
+    program_sequence: next_sequence(current_program_aux_sequence)?,
+    data: bytemuck::bytes_of(&new_aux),
+}
+.invoke_signed(signers)?;
 ```
 
-Fast path is also available via CPI (`c_u_soon_cpi::invoke_fast_path`).
+Fast path via CPI:
+
+```rust
+use c_u_soon::TypeHash;
+use c_u_soon_cpi::{next_sequence, FastPathUpdate};
+
+FastPathUpdate {
+    authority,
+    envelope,
+    program: c_u_soon_program,
+    oracle_meta: PriceData::METADATA.as_u64(),
+    sequence: next_sequence(current_oracle_sequence)?,
+    payload: bytemuck::bytes_of(&new_price),
+}
+.invoke_signed(signers)?;
+```
+
+Migration note: older `invoke_fast_path` / `invoke_update_*` helper functions were removed.
+The new format for slow updates is explicit manual wire data:
+`[disc:4][metadata:8][sequence(s):8/16][data:N]`.
 
 ## Slow path instructions
 
@@ -208,7 +302,7 @@ Fast path is also available via CPI (`c_u_soon_cpi::invoke_fast_path`).
 |-------------|-----------------|
 | authority   | signer          |
 | envelope    | writable, owned |
-| (padding)   |                 |
+| pda         | signer          |
 
 **UpdateAuxiliaryDelegated**: delegated program writes slow data. Requires active delegation. Writes restricted by program_bitmask. Sequence must be strictly greater than program_aux_sequence.
 

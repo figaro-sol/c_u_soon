@@ -1,0 +1,14 @@
+error: CuLater: field type has generic arguments; generated wrapper types do not carry type parameters. Use #[embed] for types that do not implement CuLater.
+  --> tests/ui/generic_field_error.rs:25:12
+   |
+25 |     inner: Pair<u32>,
+   |            ^^^^^^^^^
+
+error[E0091]: type parameter `_T` is never used
+  --> tests/ui/generic_field_error.rs:19:11
+   |
+19 | type Pair<_T> = ConcreteInner;
+   |           ^^ unused type parameter
+   |
+   = help: consider removing `_T` or referring to it in the body of the type alias
+   = help: if you intended `_T` to be a const parameter, use `const _T: /* Type */` instead
