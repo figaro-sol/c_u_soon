@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["sdk", "program", "client", "instruction", "cpi", "c_u_later", "c_u_later/derive", "c_u_soon_derive"]
+exclude = ["prop-amm"]
 
 [workspace.package]
 version = "0.1.0"
