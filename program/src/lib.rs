@@ -10,6 +10,8 @@
 #![allow(unexpected_cfgs)]
 #![feature(asm_experimental_arch)]
 
+extern crate alloc;
+
 mod entrypoint;
 mod fast_path;
 mod instructions;

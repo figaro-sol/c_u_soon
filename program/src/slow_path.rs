@@ -1,13 +1,15 @@
 use c_u_soon::Mask;
 use c_u_soon_instruction::{
-    SlowPathInstruction, UPDATE_AUX_DELEGATED_TAG, UPDATE_AUX_FORCE_HEADER_SIZE,
-    UPDATE_AUX_FORCE_TAG, UPDATE_AUX_HEADER_SIZE, UPDATE_AUX_TAG,
+    SlowPathInstruction, UPDATE_AUX_DELEGATED_RANGE_TAG, UPDATE_AUX_DELEGATED_TAG,
+    UPDATE_AUX_FORCE_HEADER_SIZE, UPDATE_AUX_FORCE_TAG, UPDATE_AUX_HEADER_SIZE,
+    UPDATE_AUX_RANGE_HEADER_SIZE, UPDATE_AUX_RANGE_TAG, UPDATE_AUX_TAG,
 };
 use pinocchio::{error::ProgramError, AccountView, Address, ProgramResult};
+use wincode::SchemaRead;
 
 use super::instructions;
 
-/// Account administration entry point, reached when account count ≠ 2.
+/// Account administration entry point, reached when account count != 2.
 ///
 /// Marked `#[cold]` and `#[inline(never)]` because this path is taken rarely relative to the
 /// fast path. Allocates stack for up to 64 accounts via `process_entrypoint::<64>`.
@@ -23,9 +25,8 @@ pub(crate) unsafe fn slow_entrypoint(input: *mut u8) -> u64 {
 
 /// Dispatch a slow-path instruction.
 ///
-/// Tags 0-3 (Create, Close, SetDelegatedProgram, ClearDelegation) use wincode.
-/// Tags 4-6 (UpdateAuxiliary, UpdateAuxiliaryDelegated, UpdateAuxiliaryForce) use
-/// a manual wire format: `[disc:4][metadata:8][sequence(s):8/16][data:N]`.
+/// Tags 4-8 (UpdateAuxiliary variants) use a manual wire format.
+/// All other tags (0-3, 9-10) use wincode deserialization with trailing-data rejection.
 fn process_instruction(
     program_id: &Address,
     accounts: &[AccountView],
@@ -71,9 +72,38 @@ fn process_instruction(
                 program_id, accounts, metadata, auth_seq, prog_seq, aux_data,
             )
         }
+        UPDATE_AUX_RANGE_TAG => {
+            if data.len() < UPDATE_AUX_RANGE_HEADER_SIZE {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let metadata = u64::from_le_bytes(data[4..12].try_into().unwrap());
+            let sequence = u64::from_le_bytes(data[12..20].try_into().unwrap());
+            let offset = data[20];
+            let range_data = &data[21..];
+            instructions::update_auxiliary_multi_range::process_single(
+                program_id, accounts, metadata, sequence, offset, range_data,
+            )
+        }
+        UPDATE_AUX_DELEGATED_RANGE_TAG => {
+            if data.len() < UPDATE_AUX_RANGE_HEADER_SIZE {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let metadata = u64::from_le_bytes(data[4..12].try_into().unwrap());
+            let sequence = u64::from_le_bytes(data[12..20].try_into().unwrap());
+            let offset = data[20];
+            let range_data = &data[21..];
+            instructions::update_auxiliary_delegated_multi_range::process_single(
+                program_id, accounts, metadata, sequence, offset, range_data,
+            )
+        }
         _ => {
-            let ix: SlowPathInstruction =
-                wincode::deserialize(data).map_err(|_| ProgramError::InvalidInstructionData)?;
+            // Wincode deserialization with trailing-data rejection
+            let mut cursor: &[u8] = data;
+            let ix = <SlowPathInstruction as SchemaRead>::get(&mut cursor)
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+            if !cursor.is_empty() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
             if !ix.validate() {
                 return Err(ProgramError::InvalidInstructionData);
             }
@@ -102,6 +132,20 @@ fn process_instruction(
                 SlowPathInstruction::ClearDelegation => {
                     instructions::clear_delegation::process(program_id, accounts)
                 }
+                SlowPathInstruction::UpdateAuxiliaryMultiRange {
+                    metadata,
+                    sequence,
+                    ranges,
+                } => instructions::update_auxiliary_multi_range::process(
+                    program_id, accounts, metadata, sequence, ranges,
+                ),
+                SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange {
+                    metadata,
+                    sequence,
+                    ranges,
+                } => instructions::update_auxiliary_delegated_multi_range::process(
+                    program_id, accounts, metadata, sequence, ranges,
+                ),
             }
         }
     }

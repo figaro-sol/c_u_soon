@@ -376,43 +376,100 @@ impl Mask {
         true
     }
 
-    /// Apply a masked update: copy bytes from `src` to `dest` where the mask allows.
+    /// Validate a masked update without applying it.
     ///
-    /// `src` may be shorter than `AUX_DATA_SIZE`; only `src.len()` bytes are validated
-    /// and copied. Returns `false` if `src` exceeds `AUX_DATA_SIZE` or if any blocked
-    /// byte differs between `src` and `dest`.
+    /// Checks that `src` bytes written at `offset` into `dest` don't modify any
+    /// blocked byte. Returns `false` if the region exceeds `AUX_DATA_SIZE` or if
+    /// any blocked byte differs between `src` and `dest[offset..]`.
     ///
     /// Storage polarity: 0xFF = blocked, 0x00 = writable.
-    /// Full u64 chunks use bitwise validation; any trailing bytes (len % 8) are checked
-    /// individually.
+    /// Uses u64-chunked fast path for aligned regions; byte-level for head/tail.
     #[inline]
-    pub fn apply_masked_update(&self, dest: &mut [u8; AUX_DATA_SIZE], src: &[u8]) -> bool {
+    pub fn check_masked_update(
+        &self,
+        dest: &[u8; AUX_DATA_SIZE],
+        offset: usize,
+        src: &[u8],
+    ) -> bool {
         let len = src.len();
-        if len > AUX_DATA_SIZE {
+        let end = match offset.checked_add(len) {
+            Some(e) => e,
+            None => return false,
+        };
+        if end > AUX_DATA_SIZE {
             return false;
         }
-        let full_chunks = len / 8;
-        // Pass 1a: validate u64-aligned chunks
-        for i in 0..full_chunks {
-            let off = i * 8;
-            let src_qw = u64::from_ne_bytes(src[off..off + 8].try_into().unwrap());
-            let dest_qw = u64::from_ne_bytes(dest[off..off + 8].try_into().unwrap());
-            if src_qw == dest_qw {
-                continue;
-            }
-            let mask_qw = u64::from_ne_bytes(self.0[off..off + 8].try_into().unwrap());
-            if (mask_qw & src_qw) != (mask_qw & dest_qw) {
+
+        // Aligned boundaries within the *absolute* buffer coordinate space
+        let aligned_start = (offset + 7) & !7; // next 8-aligned >= offset
+        let aligned_end = end & !7; // last 8-aligned <= end
+
+        // Head: byte-level check for [offset..min(aligned_start, end))
+        let head_end = if aligned_start > end {
+            end
+        } else {
+            aligned_start
+        };
+        for abs in offset..head_end {
+            let si = abs - offset;
+            if src[si] != dest[abs] && self.0[abs] == 0xFF {
                 return false;
             }
         }
-        // Pass 1b: validate tail (len % 8 bytes)
-        for i in (full_chunks * 8)..len {
-            if src[i] != dest[i] && self.0[i] == 0xFF {
+
+        // Body: u64-chunked check for [aligned_start..aligned_end)
+        if aligned_start < aligned_end {
+            let mut abs = aligned_start;
+            while abs < aligned_end {
+                let si = abs - offset;
+                let src_qw = u64::from_ne_bytes(src[si..si + 8].try_into().unwrap());
+                let dest_qw = u64::from_ne_bytes(dest[abs..abs + 8].try_into().unwrap());
+                if src_qw != dest_qw {
+                    let mask_qw = u64::from_ne_bytes(self.0[abs..abs + 8].try_into().unwrap());
+                    if (mask_qw & src_qw) != (mask_qw & dest_qw) {
+                        return false;
+                    }
+                }
+                abs += 8;
+            }
+        }
+
+        // Tail: byte-level check for [max(aligned_end, head_end)..end)
+        let tail_start = if aligned_end < head_end {
+            head_end
+        } else {
+            aligned_end
+        };
+        for abs in tail_start..end {
+            let si = abs - offset;
+            if src[si] != dest[abs] && self.0[abs] == 0xFF {
                 return false;
             }
         }
-        // Pass 2: copy only src bytes
-        dest[..len].copy_from_slice(src);
+
+        true
+    }
+
+    /// Apply a masked update: copy bytes from `src` to `dest[offset..]` where the mask allows.
+    ///
+    /// `src` bytes are written starting at `offset`. Returns `false` if the region
+    /// exceeds `AUX_DATA_SIZE` or if any blocked byte differs between `src` and
+    /// `dest[offset..]`.
+    ///
+    /// When `offset == 0`, behaves identically to the previous full-struct path.
+    /// Range callers pass the range offset.
+    #[inline]
+    pub fn apply_masked_update(
+        &self,
+        dest: &mut [u8; AUX_DATA_SIZE],
+        offset: usize,
+        src: &[u8],
+    ) -> bool {
+        if !self.check_masked_update(dest, offset, src) {
+            return false;
+        }
+        let len = src.len();
+        dest[offset..offset + len].copy_from_slice(src);
         true
     }
 }
@@ -509,7 +566,7 @@ mod tests {
         let mut src = [0u8; AUX_DATA_SIZE];
         src[0] = 0xAA;
         src[50] = 0xBB;
-        assert!(Mask::ALL_WRITABLE.apply_masked_update(&mut dest, &src));
+        assert!(Mask::ALL_WRITABLE.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[0], 0xAA);
         assert_eq!(dest[50], 0xBB);
     }
@@ -519,7 +576,7 @@ mod tests {
         let mut dest = [0u8; AUX_DATA_SIZE];
         let mut src = [0u8; AUX_DATA_SIZE];
         src[0] = 1;
-        assert!(!Mask::ALL_BLOCKED.apply_masked_update(&mut dest, &src));
+        assert!(!Mask::ALL_BLOCKED.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[0], 0);
     }
 
@@ -534,7 +591,7 @@ mod tests {
         src[1] = 0xAA;
         src[2] = 0xBB;
 
-        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert!(bitmask.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[0], 0);
         assert_eq!(dest[1], 0xAA);
         assert_eq!(dest[2], 0xBB);
@@ -617,7 +674,7 @@ mod tests {
         src[200] = 0xBB;
         src[255] = 0xCC;
 
-        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert!(bitmask.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[128], 0xAA);
         assert_eq!(dest[200], 0xBB);
         assert_eq!(dest[255], 0xCC);
@@ -631,7 +688,7 @@ mod tests {
         let mut src = [0u8; AUX_DATA_SIZE];
         src[200] = 0xFF;
 
-        assert!(!bitmask.apply_masked_update(&mut dest, &src));
+        assert!(!bitmask.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[200], 0);
     }
 
@@ -650,7 +707,7 @@ mod tests {
         src[200] = 0x33;
         src[255] = 0x44;
 
-        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert!(bitmask.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[0], 0x11);
         assert_eq!(dest[1], 0x22);
         assert_eq!(dest[200], 0x33);
@@ -659,7 +716,7 @@ mod tests {
         // Now try writing to a blocked byte
         let mut src2 = dest;
         src2[2] = 0xFF; // blocked
-        assert!(!bitmask.apply_masked_update(&mut dest, &src2));
+        assert!(!bitmask.apply_masked_update(&mut dest, 0, &src2));
     }
 
     #[test]
@@ -674,7 +731,7 @@ mod tests {
         src[0] = 0xAA;
         src[199] = 0xBB;
 
-        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert!(bitmask.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[0], 0xAA);
         assert_eq!(dest[199], 0xBB);
         assert_eq!(dest[200], 0); // untouched
@@ -690,7 +747,7 @@ mod tests {
         let mut dest = [0u8; AUX_DATA_SIZE];
         let src = [0x11u8; 7]; // 7 bytes = 0 full chunks + 7 tail bytes
 
-        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert!(bitmask.apply_masked_update(&mut dest, 0, &src));
         for i in 0..7 {
             assert_eq!(dest[i], 0x11);
         }
@@ -709,7 +766,7 @@ mod tests {
         let mut src = [0u8; 7];
         src[6] = 0xFF; // try to write blocked tail byte
 
-        assert!(!bitmask.apply_masked_update(&mut dest, &src));
+        assert!(!bitmask.apply_masked_update(&mut dest, 0, &src));
     }
 
     #[test]
@@ -720,7 +777,7 @@ mod tests {
         let mut dest = [0u8; AUX_DATA_SIZE];
         let src = [0xAA];
 
-        assert!(bitmask.apply_masked_update(&mut dest, &src));
+        assert!(bitmask.apply_masked_update(&mut dest, 0, &src));
         assert_eq!(dest[0], 0xAA);
     }
 
@@ -729,7 +786,7 @@ mod tests {
         let mut dest = [0u8; AUX_DATA_SIZE];
         let src = [0u8; AUX_DATA_SIZE + 1];
 
-        assert!(!Mask::ALL_WRITABLE.apply_masked_update(&mut dest, &src));
+        assert!(!Mask::ALL_WRITABLE.apply_masked_update(&mut dest, 0, &src));
     }
 
     #[test]
@@ -737,7 +794,152 @@ mod tests {
         let mut dest = [0xABu8; AUX_DATA_SIZE];
         let original = dest;
         let mask = Mask::ALL_BLOCKED;
-        assert!(mask.apply_masked_update(&mut dest, &[]));
+        assert!(mask.apply_masked_update(&mut dest, 0, &[]));
         assert_eq!(dest, original);
+    }
+
+    // ====================================================================
+    // Offset-specific tests
+    // ====================================================================
+
+    #[test]
+    fn test_offset_aligned_write() {
+        let mut mask = Mask::ALL_BLOCKED;
+        for i in 16..32 {
+            mask.allow(i);
+        }
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let src = [0xAA; 16];
+        assert!(mask.apply_masked_update(&mut dest, 16, &src));
+        assert_eq!(&dest[16..32], &[0xAA; 16]);
+        assert!(dest[..16].iter().all(|&b| b == 0));
+        assert!(dest[32..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn test_offset_unaligned_head_and_tail() {
+        let mut mask = Mask::ALL_BLOCKED;
+        for i in 3..13 {
+            mask.allow(i);
+        }
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let src = [0xBB; 10]; // offset=3, len=10, end=13
+        assert!(mask.apply_masked_update(&mut dest, 3, &src));
+        assert_eq!(&dest[3..13], &[0xBB; 10]);
+        assert!(dest[..3].iter().all(|&b| b == 0));
+        assert!(dest[13..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn test_offset_head_only() {
+        // Region entirely within one 8-byte chunk: offset=5, len=2 => [5..7), no body
+        let mut mask = Mask::ALL_BLOCKED;
+        mask.allow(5);
+        mask.allow(6);
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let src = [0xCC; 2];
+        assert!(mask.apply_masked_update(&mut dest, 5, &src));
+        assert_eq!(dest[5], 0xCC);
+        assert_eq!(dest[6], 0xCC);
+        assert_eq!(dest[4], 0);
+        assert_eq!(dest[7], 0);
+    }
+
+    #[test]
+    fn test_offset_tail_only() {
+        // offset=8, len=3 => aligned_start=8, aligned_end=8, tail=[8..11)
+        let mut mask = Mask::ALL_BLOCKED;
+        for i in 8..11 {
+            mask.allow(i);
+        }
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        let src = [0xDD; 3];
+        assert!(mask.apply_masked_update(&mut dest, 8, &src));
+        assert_eq!(&dest[8..11], &[0xDD; 3]);
+    }
+
+    #[test]
+    fn test_offset_blocked_unchanged_succeeds() {
+        // Byte 5 is blocked but src matches dest => should succeed
+        let mut mask = Mask::ALL_WRITABLE;
+        mask.block(5);
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        dest[5] = 0x42;
+        let mut src = [0u8; 8]; // offset=0
+        src[5] = 0x42; // matches dest
+        assert!(mask.apply_masked_update(&mut dest, 0, &src));
+    }
+
+    #[test]
+    fn test_offset_blocked_changed_fails() {
+        // Byte 5 is blocked and src differs => should fail
+        let mut mask = Mask::ALL_WRITABLE;
+        mask.block(5);
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        dest[5] = 0x42;
+        let mut src = [0u8; 8];
+        src[5] = 0x99; // differs from dest
+        assert!(!mask.apply_masked_update(&mut dest, 0, &src));
+    }
+
+    #[test]
+    fn test_offset_blocked_unchanged_succeeds_with_offset() {
+        // offset=3, byte 5 (absolute) is blocked but unchanged
+        let mut mask = Mask::ALL_WRITABLE;
+        mask.block(5);
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        dest[5] = 0x42;
+        let mut src = [0u8; 4]; // covers [3..7)
+        src[2] = 0x42; // src[2] maps to dest[5], unchanged
+        src[0] = 0xAA; // writable byte
+        assert!(mask.apply_masked_update(&mut dest, 3, &src));
+        assert_eq!(dest[3], 0xAA);
+        assert_eq!(dest[5], 0x42);
+    }
+
+    #[test]
+    fn test_offset_blocked_changed_fails_with_offset() {
+        // offset=3, byte 5 (absolute) is blocked and changed
+        let mut mask = Mask::ALL_WRITABLE;
+        mask.block(5);
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        dest[5] = 0x42;
+        let mut src = [0u8; 4]; // covers [3..7)
+        src[2] = 0x99; // src[2] maps to dest[5], CHANGED
+        assert!(!mask.apply_masked_update(&mut dest, 3, &src));
+    }
+
+    #[test]
+    fn test_offset_overflow_rejected() {
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        // offset=250, len=10 => end=260 > 256
+        assert!(!Mask::ALL_WRITABLE.apply_masked_update(&mut dest, 250, &[0xAA; 10]));
+    }
+
+    #[test]
+    fn test_offset_at_end_single_byte() {
+        let mut mask = Mask::ALL_BLOCKED;
+        mask.allow(255);
+        let mut dest = [0u8; AUX_DATA_SIZE];
+        assert!(mask.apply_masked_update(&mut dest, 255, &[0xEE]));
+        assert_eq!(dest[255], 0xEE);
+    }
+
+    #[test]
+    fn test_check_masked_update_no_side_effects() {
+        let mut mask = Mask::ALL_WRITABLE;
+        mask.block(5);
+        let dest = [0u8; AUX_DATA_SIZE];
+        let src = [0xAA; 10];
+        // blocked byte changed => check returns false, dest untouched
+        assert!(!mask.check_masked_update(&dest, 0, &src));
+    }
+
+    #[test]
+    fn test_check_masked_update_succeeds_when_valid() {
+        let mask = Mask::ALL_WRITABLE;
+        let dest = [0u8; AUX_DATA_SIZE];
+        let src = [0xAA; 10];
+        assert!(mask.check_masked_update(&dest, 16, &src));
     }
 }

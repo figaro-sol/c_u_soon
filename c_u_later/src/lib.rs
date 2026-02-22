@@ -24,6 +24,7 @@ use core::marker::PhantomData;
 pub use c_u_later_derive::CuLater;
 
 pub use bytemuck::{Pod, Zeroable};
+pub use c_u_soon_instruction::WriteSpec;
 
 #[cfg(feature = "alloc")]
 pub mod validation;

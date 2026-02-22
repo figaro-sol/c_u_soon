@@ -1,4 +1,3 @@
-extern crate alloc;
 use crate::pda::create_program_address;
 use alloc::vec::Vec;
 use c_u_soon::{Envelope, Mask, StructMetadata, ENVELOPE_SEED};

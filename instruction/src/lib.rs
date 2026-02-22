@@ -21,16 +21,30 @@ pub const UPDATE_AUX_TAG: u32 = 4;
 pub const UPDATE_AUX_DELEGATED_TAG: u32 = 5;
 /// Wire format tag for UpdateAuxiliaryForce: `[disc:4][metadata:8][auth_seq:8][prog_seq:8][data:N]`
 pub const UPDATE_AUX_FORCE_TAG: u32 = 6;
-
+/// Wire format tag for UpdateAuxiliaryRange: `[disc:4][metadata:8][sequence:8][offset:1][data:N]`
+pub const UPDATE_AUX_RANGE_TAG: u32 = 7;
+/// Wire format tag for UpdateAuxiliaryDelegatedRange: `[disc:4][metadata:8][sequence:8][offset:1][data:N]`
+pub const UPDATE_AUX_DELEGATED_RANGE_TAG: u32 = 8;
 /// Header size for UpdateAuxiliary/UpdateAuxiliaryDelegated: disc(4) + metadata(8) + sequence(8)
 pub const UPDATE_AUX_HEADER_SIZE: usize = 4 + 8 + 8;
 /// Header size for UpdateAuxiliaryForce: disc(4) + metadata(8) + auth_seq(8) + prog_seq(8)
 pub const UPDATE_AUX_FORCE_HEADER_SIZE: usize = 4 + 8 + 8 + 8;
+/// Header size for UpdateAuxiliaryRange/DelegatedRange: disc(4) + metadata(8) + sequence(8) + offset(1)
+pub const UPDATE_AUX_RANGE_HEADER_SIZE: usize = 4 + 8 + 8 + 1;
 
 /// Max serialized size for UpdateAuxiliary/Delegated: header(20) + max_data(255) = 275
 pub const UPDATE_AUX_MAX_SIZE: usize = UPDATE_AUX_HEADER_SIZE + MAX_AUX_STRUCT_SIZE;
 /// Max serialized size for UpdateAuxiliaryForce: header(28) + max_data(255) = 283
 pub const UPDATE_AUX_FORCE_MAX_SIZE: usize = UPDATE_AUX_FORCE_HEADER_SIZE + MAX_AUX_STRUCT_SIZE;
+/// Max serialized size for UpdateAuxiliaryRange/DelegatedRange: header(21) + max_data(255) = 276
+pub const UPDATE_AUX_RANGE_MAX_SIZE: usize = UPDATE_AUX_RANGE_HEADER_SIZE + MAX_AUX_STRUCT_SIZE;
+
+/// A single write operation: write `data` at byte `offset` within the auxiliary buffer.
+#[derive(Debug, Clone, SchemaWrite, SchemaRead)]
+pub struct WriteSpec {
+    pub offset: u8,
+    pub data: Vec<u8>,
+}
 
 /// Instruction enum for slow-path operations on a c_u_soon oracle account.
 ///
@@ -70,6 +84,18 @@ pub enum SlowPathInstruction {
     },
     #[wincode(tag = 3)]
     ClearDelegation,
+    #[wincode(tag = 9)]
+    UpdateAuxiliaryMultiRange {
+        metadata: u64,
+        sequence: u64,
+        ranges: Vec<WriteSpec>,
+    },
+    #[wincode(tag = 10)]
+    UpdateAuxiliaryDelegatedMultiRange {
+        metadata: u64,
+        sequence: u64,
+        ranges: Vec<WriteSpec>,
+    },
 }
 
 impl SlowPathInstruction {
@@ -102,6 +128,13 @@ impl SlowPathInstruction {
                 .chain(user_bitmask.iter())
                 .all(|&b| b == 0x00 || b == 0xFF),
             SlowPathInstruction::Close | SlowPathInstruction::ClearDelegation => true,
+            SlowPathInstruction::UpdateAuxiliaryMultiRange { ranges, .. }
+            | SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange { ranges, .. } => {
+                if ranges.is_empty() || ranges.len() > MAX_AUX_STRUCT_SIZE {
+                    return false;
+                }
+                ranges.iter().all(|spec| !spec.data.is_empty())
+            }
         }
     }
 }
@@ -130,6 +163,28 @@ mod tests {
                 2,
             ),
             (SlowPathInstruction::ClearDelegation, 3),
+            (
+                SlowPathInstruction::UpdateAuxiliaryMultiRange {
+                    metadata: 0,
+                    sequence: 0,
+                    ranges: alloc::vec![WriteSpec {
+                        offset: 0,
+                        data: alloc::vec![0]
+                    }],
+                },
+                9,
+            ),
+            (
+                SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange {
+                    metadata: 0,
+                    sequence: 0,
+                    ranges: alloc::vec![WriteSpec {
+                        offset: 0,
+                        data: alloc::vec![0]
+                    }],
+                },
+                10,
+            ),
         ];
         for (ix, expected_disc) in cases {
             let bytes = wincode::serialize(ix).unwrap();
@@ -148,14 +203,122 @@ mod tests {
         assert_eq!(UPDATE_AUX_TAG, 4);
         assert_eq!(UPDATE_AUX_DELEGATED_TAG, 5);
         assert_eq!(UPDATE_AUX_FORCE_TAG, 6);
+        assert_eq!(UPDATE_AUX_RANGE_TAG, 7);
+        assert_eq!(UPDATE_AUX_DELEGATED_RANGE_TAG, 8);
     }
 
     #[test]
     fn test_header_size_constants() {
         assert_eq!(UPDATE_AUX_HEADER_SIZE, 20);
         assert_eq!(UPDATE_AUX_FORCE_HEADER_SIZE, 28);
+        assert_eq!(UPDATE_AUX_RANGE_HEADER_SIZE, 21);
         assert_eq!(UPDATE_AUX_MAX_SIZE, 275);
         assert_eq!(UPDATE_AUX_FORCE_MAX_SIZE, 283);
+        assert_eq!(UPDATE_AUX_RANGE_MAX_SIZE, 276);
+    }
+
+    #[test]
+    fn test_wincode_roundtrip_update_aux_multi_range() {
+        let ix = SlowPathInstruction::UpdateAuxiliaryMultiRange {
+            metadata: 0xDEAD_BEEF_1234_5678,
+            sequence: 42,
+            ranges: alloc::vec![
+                WriteSpec {
+                    offset: 5,
+                    data: alloc::vec![0xAA; 3]
+                },
+                WriteSpec {
+                    offset: 20,
+                    data: alloc::vec![0xBB; 2]
+                },
+            ],
+        };
+        let serialized = wincode::serialize(&ix).unwrap();
+        let disc = u32::from_le_bytes(serialized[..4].try_into().unwrap());
+        assert_eq!(disc, 9);
+        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
+        match deserialized {
+            SlowPathInstruction::UpdateAuxiliaryMultiRange {
+                metadata,
+                sequence,
+                ranges,
+            } => {
+                assert_eq!(metadata, 0xDEAD_BEEF_1234_5678);
+                assert_eq!(sequence, 42);
+                assert_eq!(ranges.len(), 2);
+                assert_eq!(ranges[0].offset, 5);
+                assert_eq!(ranges[0].data, alloc::vec![0xAA; 3]);
+                assert_eq!(ranges[1].offset, 20);
+                assert_eq!(ranges[1].data, alloc::vec![0xBB; 2]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_wincode_roundtrip_update_aux_delegated_multi_range() {
+        let ix = SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange {
+            metadata: 0x1234,
+            sequence: 99,
+            ranges: alloc::vec![WriteSpec {
+                offset: 0,
+                data: alloc::vec![0xFF]
+            },],
+        };
+        let serialized = wincode::serialize(&ix).unwrap();
+        let disc = u32::from_le_bytes(serialized[..4].try_into().unwrap());
+        assert_eq!(disc, 10);
+        let deserialized: SlowPathInstruction = wincode::deserialize(&serialized).unwrap();
+        match deserialized {
+            SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange {
+                metadata,
+                sequence,
+                ranges,
+            } => {
+                assert_eq!(metadata, 0x1234);
+                assert_eq!(sequence, 99);
+                assert_eq!(ranges.len(), 1);
+                assert_eq!(ranges[0].offset, 0);
+                assert_eq!(ranges[0].data, alloc::vec![0xFF]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_validate_multi_range_empty_ranges() {
+        let ix = SlowPathInstruction::UpdateAuxiliaryMultiRange {
+            metadata: 0,
+            sequence: 1,
+            ranges: alloc::vec![],
+        };
+        assert!(!ix.validate());
+    }
+
+    #[test]
+    fn test_validate_multi_range_empty_data() {
+        let ix = SlowPathInstruction::UpdateAuxiliaryMultiRange {
+            metadata: 0,
+            sequence: 1,
+            ranges: alloc::vec![WriteSpec {
+                offset: 0,
+                data: alloc::vec![]
+            }],
+        };
+        assert!(!ix.validate());
+    }
+
+    #[test]
+    fn test_validate_multi_range_valid() {
+        let ix = SlowPathInstruction::UpdateAuxiliaryMultiRange {
+            metadata: 0,
+            sequence: 1,
+            ranges: alloc::vec![WriteSpec {
+                offset: 0,
+                data: alloc::vec![0xAA]
+            }],
+        };
+        assert!(ix.validate());
     }
 
     #[test]
@@ -206,6 +369,32 @@ mod tests {
         let parsed_prog = u64::from_le_bytes(buf[20..28].try_into().unwrap());
         assert_eq!(parsed_prog, prog_seq);
         assert_eq!(&buf[28..], &data);
+    }
+
+    #[test]
+    fn test_manual_wire_format_update_aux_range() {
+        let metadata: u64 = 0xDEAD_BEEF_1234_5678;
+        let sequence: u64 = 42;
+        let offset: u8 = 10;
+        let data = [0xCC; 16];
+
+        let mut buf = alloc::vec![];
+        buf.extend_from_slice(&UPDATE_AUX_RANGE_TAG.to_le_bytes());
+        buf.extend_from_slice(&metadata.to_le_bytes());
+        buf.extend_from_slice(&sequence.to_le_bytes());
+        buf.push(offset);
+        buf.extend_from_slice(&data);
+
+        assert_eq!(buf.len(), UPDATE_AUX_RANGE_HEADER_SIZE + 16);
+
+        let disc = u32::from_le_bytes(buf[..4].try_into().unwrap());
+        assert_eq!(disc, UPDATE_AUX_RANGE_TAG);
+        let parsed_meta = u64::from_le_bytes(buf[4..12].try_into().unwrap());
+        assert_eq!(parsed_meta, metadata);
+        let parsed_seq = u64::from_le_bytes(buf[12..20].try_into().unwrap());
+        assert_eq!(parsed_seq, sequence);
+        assert_eq!(buf[20], offset);
+        assert_eq!(&buf[21..], &data);
     }
 
     #[test]

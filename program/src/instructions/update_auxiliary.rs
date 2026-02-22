@@ -58,7 +58,7 @@ pub fn process(
 
     if !envelope
         .user_bitmask
-        .apply_masked_update(&mut envelope.auxiliary_data, data)
+        .apply_masked_update(&mut envelope.auxiliary_data, 0, data)
     {
         return Err(ProgramError::InvalidArgument);
     }

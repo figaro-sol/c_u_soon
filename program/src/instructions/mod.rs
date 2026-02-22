@@ -1,3 +1,4 @@
+pub mod apply_ranges;
 pub mod clear_delegation;
 pub mod close;
 pub mod cpi_verification;
@@ -5,4 +6,6 @@ pub mod create;
 pub mod set_delegated_program;
 pub mod update_auxiliary;
 pub mod update_auxiliary_delegated;
+pub mod update_auxiliary_delegated_multi_range;
 pub mod update_auxiliary_force;
+pub mod update_auxiliary_multi_range;

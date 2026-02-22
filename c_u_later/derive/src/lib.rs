@@ -200,6 +200,8 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let program_wrapper = generate_wrapper(name, vis, &field_infos, "Program", true)?;
     let authority_wrapper = generate_wrapper(name, vis, &field_infos, "Authority", false)?;
+    let program_delta = generate_delta_builder(name, vis, &field_infos, "Program", true);
+    let authority_delta = generate_delta_builder(name, vis, &field_infos, "Authority", false);
 
     let name_snake = to_snake_case(&name.to_string());
     let program_mask_fn = format_ident!("__cu_later_program_mask_{}", name_snake);
@@ -241,6 +243,8 @@ fn derive_cu_later_impl(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         #program_wrapper
         #authority_wrapper
+        #program_delta
+        #authority_delta
     };
 
     Ok(expanded)
@@ -333,6 +337,114 @@ fn build_wrapper_path(ty: &Type, suffix: &str) -> syn::Result<syn::Path> {
             ty,
             "CuLater: unsupported field type for wrapper generation (expected a named type path).",
         ))
+    }
+}
+
+fn generate_delta_builder(
+    struct_name: &syn::Ident,
+    vis: &syn::Visibility,
+    fields: &[FieldInfo],
+    suffix: &str,
+    is_program: bool,
+) -> TokenStream2 {
+    let delta_name = format_ident!("{}{}Delta", struct_name, suffix);
+
+    // Collect writable, non-padding fields for this role
+    let mut writable_fields: Vec<(usize, &FieldInfo)> = Vec::new();
+    for field in fields.iter() {
+        let included = if is_program {
+            field.has_program
+        } else {
+            field.has_authority
+        };
+        if included && !is_padding_field(&field.name) {
+            let idx = writable_fields.len();
+            writable_fields.push((idx, field));
+        }
+    }
+
+    let n_fields = writable_fields.len();
+
+    if n_fields == 0 {
+        // No writable fields — emit an empty delta builder
+        return quote! {
+            #vis struct #delta_name;
+
+            impl #delta_name {
+                pub fn new() -> Self { Self }
+                pub fn is_empty(&self) -> bool { true }
+                pub fn to_write_specs(&self) -> ::c_u_later::__private::Vec<::c_u_later::WriteSpec> {
+                    ::c_u_later::__private::Vec::new()
+                }
+            }
+        };
+    }
+
+    // Generate setters
+    let setters: Vec<TokenStream2> = writable_fields
+        .iter()
+        .map(|(idx, field)| {
+            let field_name = &field.name;
+            let field_ty = &field.ty;
+            let setter_name = format_ident!("set_{}", field_name);
+            let idx_lit = syn::Index::from(*idx);
+            quote! {
+                #vis fn #setter_name(&mut self, val: #field_ty) -> &mut Self {
+                    self.value.#field_name = val;
+                    self.set[#idx_lit] = true;
+                    self
+                }
+            }
+        })
+        .collect();
+
+    // Generate to_write_specs entries (one per writable field, in order)
+    let spec_entries: Vec<TokenStream2> = writable_fields
+        .iter()
+        .map(|(idx, field)| {
+            let field_name = &field.name;
+            let field_ty = &field.ty;
+            let idx_lit = syn::Index::from(*idx);
+            quote! {
+                if self.set[#idx_lit] {
+                    let offset = ::core::mem::offset_of!(#struct_name, #field_name);
+                    let size = ::core::mem::size_of::<#field_ty>();
+                    specs.push(::c_u_later::WriteSpec {
+                        offset: offset as u8,
+                        data: bytes[offset..offset + size].to_vec(),
+                    });
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        #vis struct #delta_name {
+            value: #struct_name,
+            set: [bool; #n_fields],
+        }
+
+        impl #delta_name {
+            pub fn new() -> Self {
+                Self {
+                    value: <#struct_name as ::bytemuck::Zeroable>::zeroed(),
+                    set: [false; #n_fields],
+                }
+            }
+
+            pub fn is_empty(&self) -> bool {
+                !self.set.iter().any(|&s| s)
+            }
+
+            #(#setters)*
+
+            pub fn to_write_specs(&self) -> ::c_u_later::__private::Vec<::c_u_later::WriteSpec> {
+                let bytes = ::bytemuck::bytes_of(&self.value);
+                let mut specs = ::c_u_later::__private::Vec::new();
+                #(#spec_entries)*
+                specs
+            }
+        }
     }
 }
 

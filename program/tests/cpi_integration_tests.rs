@@ -215,6 +215,31 @@ fn byte_writer_force_ix_data(
     v
 }
 
+fn byte_writer_range_ix_data(metadata: u64, sequence: u64, offset: u8, data: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + 8 + 1 + data.len());
+    v.push(0x05); // UpdateViaRangeSlowPath
+    v.extend_from_slice(&metadata.to_le_bytes());
+    v.extend_from_slice(&sequence.to_le_bytes());
+    v.push(offset);
+    v.extend_from_slice(data);
+    v
+}
+
+fn byte_writer_delegated_range_ix_data(
+    metadata: u64,
+    sequence: u64,
+    offset: u8,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + 8 + 1 + data.len());
+    v.push(0x06); // UpdateViaDelegatedRange
+    v.extend_from_slice(&metadata.to_le_bytes());
+    v.extend_from_slice(&sequence.to_le_bytes());
+    v.push(offset);
+    v.extend_from_slice(data);
+    v
+}
+
 // attacker_probe instruction data builders
 fn attacker_fast_path_without_signer(oracle_meta: u64, sequence: u64, payload: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(1 + 8 + 8 + 1 + payload.len());
@@ -644,4 +669,306 @@ fn test_cpi_attack_stale_sequence() {
         ],
     );
     assert!(result.program_result.is_err());
+}
+
+// -- Range Update CPI Tests --
+
+#[test]
+fn test_cpi_range_via_byte_writer() {
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_auth = Address::new_unique();
+    let pda = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let write_data = [0xAB; 8];
+    let ix_data = byte_writer_range_ix_data(TEST_META_U64, 1, 10, &write_data);
+
+    let instruction = Instruction::new_with_bytes(
+        BYTE_WRITER_ID,
+        &ix_data,
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(pda, true),
+            AccountMeta::new_readonly(PROGRAM_ID, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_auth,
+                    Mask::ALL_BLOCKED,
+                    Mask::ALL_WRITABLE,
+                ),
+            ),
+            (pda, create_funded_account(0)),
+            (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.authority_aux_sequence, 1);
+    assert_eq!(&env.auxiliary_data[10..18], &[0xAB; 8]);
+    assert!(env.auxiliary_data[..10].iter().all(|&b| b == 0));
+    assert!(env.auxiliary_data[18..TEST_TYPE_SIZE]
+        .iter()
+        .all(|&b| b == 0));
+}
+
+#[test]
+fn test_cpi_delegated_range_via_byte_writer() {
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let padding = Address::new_unique();
+
+    let write_data = [0xEE; 4];
+    let ix_data = byte_writer_delegated_range_ix_data(TEST_META_U64, 1, 50, &write_data);
+
+    let instruction = Instruction::new_with_bytes(
+        BYTE_WRITER_ID,
+        &ix_data,
+        vec![
+            AccountMeta::new_readonly(delegation_authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(PROGRAM_ID, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (delegation_authority, create_funded_account(1_000_000_000)),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_authority,
+                    Mask::ALL_WRITABLE,
+                    Mask::ALL_BLOCKED,
+                ),
+            ),
+            (padding, create_funded_account(0)),
+            (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.program_aux_sequence, 1);
+    assert_eq!(&env.auxiliary_data[50..54], &[0xEE; 4]);
+    assert!(env.auxiliary_data[..50].iter().all(|&b| b == 0));
+}
+
+#[test]
+fn test_cpi_range_mask_enforcement() {
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_auth = Address::new_unique();
+    let pda = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let mut user_bitmask = Mask::ALL_BLOCKED;
+    for i in 0..4 {
+        user_bitmask.allow(i);
+    }
+
+    // Attempt to write at offset 2, length 4 (crosses into blocked at byte 4)
+    let ix_data = byte_writer_range_ix_data(TEST_META_U64, 1, 2, &[0xAA; 4]);
+
+    let instruction = Instruction::new_with_bytes(
+        BYTE_WRITER_ID,
+        &ix_data,
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(pda, true),
+            AccountMeta::new_readonly(PROGRAM_ID, false),
+        ],
+    );
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_auth,
+                    Mask::ALL_BLOCKED,
+                    user_bitmask,
+                ),
+            ),
+            (pda, create_funded_account(0)),
+            (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
+        ],
+    );
+    assert!(result.program_result.is_err());
+}
+
+// -- Multi-Range CPI Tests --
+
+fn byte_writer_multi_range_ix_data(
+    metadata: u64,
+    sequence: u64,
+    ranges: &[(u8, &[u8])],
+) -> Vec<u8> {
+    let ranges_data = pack_ranges(ranges);
+    let mut v = Vec::with_capacity(1 + 8 + 8 + ranges_data.len());
+    v.push(0x07); // UpdateViaMultiRangeSlowPath
+    v.extend_from_slice(&metadata.to_le_bytes());
+    v.extend_from_slice(&sequence.to_le_bytes());
+    v.extend_from_slice(&ranges_data);
+    v
+}
+
+fn byte_writer_delegated_multi_range_ix_data(
+    metadata: u64,
+    sequence: u64,
+    ranges: &[(u8, &[u8])],
+) -> Vec<u8> {
+    let ranges_data = pack_ranges(ranges);
+    let mut v = Vec::with_capacity(1 + 8 + 8 + ranges_data.len());
+    v.push(0x08); // UpdateViaDelegatedMultiRange
+    v.extend_from_slice(&metadata.to_le_bytes());
+    v.extend_from_slice(&sequence.to_le_bytes());
+    v.extend_from_slice(&ranges_data);
+    v
+}
+
+fn pack_ranges(ranges: &[(u8, &[u8])]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.push(ranges.len() as u8);
+    for (offset, data) in ranges {
+        buf.push(*offset);
+        buf.push(data.len() as u8);
+        buf.extend_from_slice(data);
+    }
+    buf
+}
+
+#[test]
+fn test_cpi_multi_range_via_byte_writer() {
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_auth = Address::new_unique();
+    let pda = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+
+    let ix_data =
+        byte_writer_multi_range_ix_data(TEST_META_U64, 1, &[(0, &[0xAB; 4]), (20, &[0xCD; 8])]);
+
+    let instruction = Instruction::new_with_bytes(
+        BYTE_WRITER_ID,
+        &ix_data,
+        vec![
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(pda, true),
+            AccountMeta::new_readonly(PROGRAM_ID, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (authority, create_funded_account(1_000_000_000)),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_auth,
+                    Mask::ALL_BLOCKED,
+                    Mask::ALL_WRITABLE,
+                ),
+            ),
+            (pda, create_funded_account(0)),
+            (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.authority_aux_sequence, 1);
+    assert_eq!(&env.auxiliary_data[..4], &[0xAB; 4]);
+    assert_eq!(&env.auxiliary_data[20..28], &[0xCD; 8]);
+}
+
+#[test]
+fn test_cpi_delegated_multi_range_via_byte_writer() {
+    let mut mollusk = new_mollusk(&BYTE_WRITER_ID, BYTE_WRITER_PATH);
+    mollusk.add_program(&PROGRAM_ID, PROGRAM_PATH);
+
+    let authority = Address::new_unique();
+    let delegation_authority = Address::new_unique();
+    let envelope_pubkey = Address::new_unique();
+    let padding = Address::new_unique();
+
+    let ix_data = byte_writer_delegated_multi_range_ix_data(
+        TEST_META_U64,
+        1,
+        &[(10, &[0xEE; 4]), (50, &[0xFF; 2])],
+    );
+
+    let instruction = Instruction::new_with_bytes(
+        BYTE_WRITER_ID,
+        &ix_data,
+        vec![
+            AccountMeta::new_readonly(delegation_authority, true),
+            AccountMeta::new(envelope_pubkey, false),
+            AccountMeta::new_readonly(padding, false),
+            AccountMeta::new_readonly(PROGRAM_ID, false),
+        ],
+    );
+
+    let result = mollusk.process_and_validate_instruction(
+        &instruction,
+        &[
+            (delegation_authority, create_funded_account(1_000_000_000)),
+            (
+                envelope_pubkey,
+                create_delegated_envelope(
+                    &authority,
+                    &delegation_authority,
+                    Mask::ALL_WRITABLE,
+                    Mask::ALL_BLOCKED,
+                ),
+            ),
+            (padding, create_funded_account(0)),
+            (PROGRAM_ID, create_program_account_loader_v3(&PROGRAM_ID)),
+        ],
+        &[Check::success()],
+    );
+
+    let env: &Envelope = bytemuck::from_bytes(
+        &result.resulting_accounts[1].1.data[..core::mem::size_of::<Envelope>()],
+    );
+    assert_eq!(env.program_aux_sequence, 1);
+    assert_eq!(&env.auxiliary_data[10..14], &[0xEE; 4]);
+    assert_eq!(&env.auxiliary_data[50..52], &[0xFF; 2]);
 }

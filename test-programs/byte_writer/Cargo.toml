@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 pinocchio = { git = "ssh://git@github.com/figaro-sol/pinocchio.git", branch = "small_oracle", features = ["cpi"] }
 c_u_soon_cpi = { path = "../../cpi" }
+c_u_soon_instruction = { path = "../../instruction" }
 
 [lib]
 crate-type = ["cdylib"]

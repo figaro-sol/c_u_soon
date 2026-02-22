@@ -4,10 +4,13 @@
 //! Each struct assembles instruction data and accounts, then provides
 //! `invoke()` and `invoke_signed()` methods following the pinocchio convention.
 
+extern crate alloc;
+
 use c_u_soon::ORACLE_BYTES;
 use c_u_soon_instruction::{
-    UPDATE_AUX_DELEGATED_TAG, UPDATE_AUX_FORCE_MAX_SIZE, UPDATE_AUX_FORCE_TAG, UPDATE_AUX_MAX_SIZE,
-    UPDATE_AUX_TAG,
+    SlowPathInstruction, WriteSpec, UPDATE_AUX_DELEGATED_RANGE_TAG, UPDATE_AUX_DELEGATED_TAG,
+    UPDATE_AUX_FORCE_MAX_SIZE, UPDATE_AUX_FORCE_TAG, UPDATE_AUX_MAX_SIZE,
+    UPDATE_AUX_RANGE_MAX_SIZE, UPDATE_AUX_RANGE_TAG, UPDATE_AUX_TAG,
 };
 use pinocchio::{
     cpi::{invoke_signed, Signer},
@@ -217,6 +220,194 @@ impl UpdateAuxiliaryForce<'_> {
         invoke_signed(
             &ix,
             &[self.authority, self.envelope, self.delegation_auth],
+            signers,
+        )
+    }
+}
+
+/// CPI: UpdateAuxiliaryRange (authority writes a byte range of aux data).
+///
+/// Wire format: `[disc:4][metadata:8][sequence:8][offset:1][data:N]`
+///
+/// Account order: `[authority (readonly signer), envelope (writable), pda (readonly signer)]`
+pub struct UpdateAuxiliaryRange<'a> {
+    pub authority: &'a AccountView,
+    pub envelope: &'a AccountView,
+    pub pda: &'a AccountView,
+    pub program: &'a AccountView,
+    pub metadata: u64,
+    pub sequence: u64,
+    pub offset: u8,
+    pub data: &'a [u8],
+}
+
+impl UpdateAuxiliaryRange<'_> {
+    pub fn invoke(&self) -> ProgramResult {
+        self.invoke_signed(&[])
+    }
+
+    pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
+        let data_len = self.data.len();
+        let total = 21 + data_len;
+        if total > UPDATE_AUX_RANGE_MAX_SIZE {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let mut buf = [0u8; UPDATE_AUX_RANGE_MAX_SIZE];
+        buf[..4].copy_from_slice(&UPDATE_AUX_RANGE_TAG.to_le_bytes());
+        buf[4..12].copy_from_slice(&self.metadata.to_le_bytes());
+        buf[12..20].copy_from_slice(&self.sequence.to_le_bytes());
+        buf[20] = self.offset;
+        buf[21..21 + data_len].copy_from_slice(self.data);
+
+        let cpi_accounts = [
+            InstructionAccount::readonly_signer(self.authority.address()),
+            InstructionAccount::writable(self.envelope.address()),
+            InstructionAccount::readonly_signer(self.pda.address()),
+        ];
+        let ix = InstructionView {
+            program_id: self.program.address(),
+            accounts: &cpi_accounts,
+            data: &buf[..total],
+        };
+        invoke_signed(&ix, &[self.authority, self.envelope, self.pda], signers)
+    }
+}
+
+/// CPI: UpdateAuxiliaryDelegatedRange (delegated program writes a byte range of aux data).
+///
+/// Wire format: `[disc:4][metadata:8][sequence:8][offset:1][data:N]`
+///
+/// Account order: `[delegation_auth (readonly signer), envelope (writable), padding (readonly)]`
+pub struct UpdateAuxiliaryDelegatedRange<'a> {
+    pub envelope: &'a AccountView,
+    pub delegation_auth: &'a AccountView,
+    pub padding: &'a AccountView,
+    pub program: &'a AccountView,
+    pub metadata: u64,
+    pub sequence: u64,
+    pub offset: u8,
+    pub data: &'a [u8],
+}
+
+impl UpdateAuxiliaryDelegatedRange<'_> {
+    pub fn invoke(&self) -> ProgramResult {
+        self.invoke_signed(&[])
+    }
+
+    pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
+        let data_len = self.data.len();
+        let total = 21 + data_len;
+        if total > UPDATE_AUX_RANGE_MAX_SIZE {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let mut buf = [0u8; UPDATE_AUX_RANGE_MAX_SIZE];
+        buf[..4].copy_from_slice(&UPDATE_AUX_DELEGATED_RANGE_TAG.to_le_bytes());
+        buf[4..12].copy_from_slice(&self.metadata.to_le_bytes());
+        buf[12..20].copy_from_slice(&self.sequence.to_le_bytes());
+        buf[20] = self.offset;
+        buf[21..21 + data_len].copy_from_slice(self.data);
+
+        let cpi_accounts = [
+            InstructionAccount::readonly_signer(self.delegation_auth.address()),
+            InstructionAccount::writable(self.envelope.address()),
+            InstructionAccount::readonly(self.padding.address()),
+        ];
+        let ix = InstructionView {
+            program_id: self.program.address(),
+            accounts: &cpi_accounts,
+            data: &buf[..total],
+        };
+        invoke_signed(
+            &ix,
+            &[self.delegation_auth, self.envelope, self.padding],
+            signers,
+        )
+    }
+}
+
+/// CPI: UpdateAuxiliaryMultiRange (authority writes multiple byte ranges of aux data).
+///
+/// Serialized via wincode as `SlowPathInstruction::UpdateAuxiliaryMultiRange`.
+///
+/// Account order: `[authority (readonly signer), envelope (writable), pda (readonly signer)]`
+pub struct UpdateAuxiliaryMultiRange<'a> {
+    pub authority: &'a AccountView,
+    pub envelope: &'a AccountView,
+    pub pda: &'a AccountView,
+    pub program: &'a AccountView,
+    pub metadata: u64,
+    pub sequence: u64,
+    pub ranges: &'a [WriteSpec],
+}
+
+impl UpdateAuxiliaryMultiRange<'_> {
+    pub fn invoke(&self) -> ProgramResult {
+        self.invoke_signed(&[])
+    }
+
+    pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
+        let ix_data = SlowPathInstruction::UpdateAuxiliaryMultiRange {
+            metadata: self.metadata,
+            sequence: self.sequence,
+            ranges: self.ranges.to_vec(),
+        };
+        let buf = wincode::serialize(&ix_data).map_err(|_| ProgramError::InvalidInstructionData)?;
+
+        let cpi_accounts = [
+            InstructionAccount::readonly_signer(self.authority.address()),
+            InstructionAccount::writable(self.envelope.address()),
+            InstructionAccount::readonly_signer(self.pda.address()),
+        ];
+        let ix = InstructionView {
+            program_id: self.program.address(),
+            accounts: &cpi_accounts,
+            data: &buf,
+        };
+        invoke_signed(&ix, &[self.authority, self.envelope, self.pda], signers)
+    }
+}
+
+/// CPI: UpdateAuxiliaryDelegatedMultiRange (delegated program writes multiple byte ranges).
+///
+/// Serialized via wincode as `SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange`.
+///
+/// Account order: `[delegation_auth (readonly signer), envelope (writable), padding (readonly)]`
+pub struct UpdateAuxiliaryDelegatedMultiRange<'a> {
+    pub envelope: &'a AccountView,
+    pub delegation_auth: &'a AccountView,
+    pub padding: &'a AccountView,
+    pub program: &'a AccountView,
+    pub metadata: u64,
+    pub sequence: u64,
+    pub ranges: &'a [WriteSpec],
+}
+
+impl UpdateAuxiliaryDelegatedMultiRange<'_> {
+    pub fn invoke(&self) -> ProgramResult {
+        self.invoke_signed(&[])
+    }
+
+    pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
+        let ix_data = SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange {
+            metadata: self.metadata,
+            sequence: self.sequence,
+            ranges: self.ranges.to_vec(),
+        };
+        let buf = wincode::serialize(&ix_data).map_err(|_| ProgramError::InvalidInstructionData)?;
+
+        let cpi_accounts = [
+            InstructionAccount::readonly_signer(self.delegation_auth.address()),
+            InstructionAccount::writable(self.envelope.address()),
+            InstructionAccount::readonly(self.padding.address()),
+        ];
+        let ix = InstructionView {
+            program_id: self.program.address(),
+            accounts: &cpi_accounts,
+            data: &buf,
+        };
+        invoke_signed(
+            &ix,
+            &[self.delegation_auth, self.envelope, self.padding],
             signers,
         )
     }

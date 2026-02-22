@@ -549,6 +549,7 @@ dependencies = [
  "bytemuck",
  "c_u_later_derive",
  "c_u_soon",
+ "c_u_soon_instruction",
  "trybuild",
 ]
 
@@ -587,6 +588,7 @@ dependencies = [
  "c_u_soon",
  "c_u_soon_instruction",
  "pinocchio 0.10.2 (git+ssh://git@github.com/figaro-sol/pinocchio.git?branch=small_oracle)",
+ "wincode 0.2.5",
 ]
 
 [[package]]

@@ -10,7 +10,8 @@
 
 use c_u_soon::{Mask, StructMetadata, TypeHash, MAX_CUSTOM_SEEDS, ORACLE_BYTES};
 use c_u_soon_instruction::{
-    SlowPathInstruction, UPDATE_AUX_DELEGATED_TAG, UPDATE_AUX_FORCE_TAG, UPDATE_AUX_TAG,
+    SlowPathInstruction, WriteSpec, UPDATE_AUX_DELEGATED_RANGE_TAG, UPDATE_AUX_DELEGATED_TAG,
+    UPDATE_AUX_FORCE_TAG, UPDATE_AUX_RANGE_TAG, UPDATE_AUX_TAG,
 };
 
 /// Errors returned by instruction builders.
@@ -187,6 +188,70 @@ pub fn update_auxiliary_delegated_instruction_data(
     buf.extend_from_slice(&sequence.to_le_bytes());
     buf.extend_from_slice(data);
     buf
+}
+
+/// Build `UpdateAuxiliaryRange` instruction data (manual wire format).
+///
+/// Wire: `[disc:4][metadata:8][sequence:8][offset:1][data:N]`
+pub fn update_auxiliary_range_instruction_data(
+    metadata: u64,
+    sequence: u64,
+    offset: u8,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(21 + data.len());
+    buf.extend_from_slice(&UPDATE_AUX_RANGE_TAG.to_le_bytes());
+    buf.extend_from_slice(&metadata.to_le_bytes());
+    buf.extend_from_slice(&sequence.to_le_bytes());
+    buf.push(offset);
+    buf.extend_from_slice(data);
+    buf
+}
+
+/// Build `UpdateAuxiliaryDelegatedRange` instruction data (manual wire format).
+///
+/// Wire: `[disc:4][metadata:8][sequence:8][offset:1][data:N]`
+pub fn update_auxiliary_delegated_range_instruction_data(
+    metadata: u64,
+    sequence: u64,
+    offset: u8,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(21 + data.len());
+    buf.extend_from_slice(&UPDATE_AUX_DELEGATED_RANGE_TAG.to_le_bytes());
+    buf.extend_from_slice(&metadata.to_le_bytes());
+    buf.extend_from_slice(&sequence.to_le_bytes());
+    buf.push(offset);
+    buf.extend_from_slice(data);
+    buf
+}
+
+/// Build `UpdateAuxiliaryMultiRange` instruction data (wincode serialized).
+pub fn update_auxiliary_multi_range_instruction_data(
+    metadata: u64,
+    sequence: u64,
+    ranges: &[WriteSpec],
+) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryMultiRange {
+        metadata,
+        sequence,
+        ranges: ranges.to_vec(),
+    })
+    .expect("multi-range serialization failed")
+}
+
+/// Build `UpdateAuxiliaryDelegatedMultiRange` instruction data (wincode serialized).
+pub fn update_auxiliary_delegated_multi_range_instruction_data(
+    metadata: u64,
+    sequence: u64,
+    ranges: &[WriteSpec],
+) -> Vec<u8> {
+    wincode::serialize(&SlowPathInstruction::UpdateAuxiliaryDelegatedMultiRange {
+        metadata,
+        sequence,
+        ranges: ranges.to_vec(),
+    })
+    .expect("delegated multi-range serialization failed")
 }
 
 /// Typed `UpdateAuxiliary`: derives metadata from `T::METADATA`.

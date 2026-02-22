@@ -7,6 +7,7 @@ name = "byte_writer"
 version = "0.1.0"
 dependencies = [
  "c_u_soon_cpi",
+ "c_u_soon_instruction",
  "pinocchio",
 ]
 
@@ -31,14 +32,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c_u_later"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "c_u_soon",
-]
-
-[[package]]
 name = "c_u_soon"
 version = "0.1.0"
 dependencies = [
@@ -53,13 +46,13 @@ dependencies = [
  "c_u_soon",
  "c_u_soon_instruction",
  "pinocchio",
+ "wincode",
 ]
 
 [[package]]
 name = "c_u_soon_instruction"
 version = "0.1.0"
 dependencies = [
- "c_u_later",
  "c_u_soon",
  "wincode",
 ]

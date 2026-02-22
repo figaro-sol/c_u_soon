@@ -11,6 +11,7 @@ alloc = []
 [dependencies]
 c_u_later_derive = { path = "derive", optional = true }
 c_u_soon = { path = "../sdk" }
+c_u_soon_instruction = { path = "../instruction" }
 bytemuck = { workspace = true }
 
 [dev-dependencies]
